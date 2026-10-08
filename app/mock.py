@@ -115,27 +115,31 @@ def mock_image(prompt: str, out: Path, aspect_ratio: str) -> None:
 
 
 def mock_song(scenes, durations, lang, out: Path) -> None:
-    """Lullaby bed + hummed lines at the planned positions, so sung mode can be tested offline."""
+    """Lullaby bed + hummed lines. Like the real music API it does NOT keep to the plan: each line
+    lands progressively later (drift), and the true positions are written next to the file so the
+    mock aligner can 'measure' them — this is what the sync test checks the pictures against."""
     from .music import synth_lullaby
     from .tts import _mock_voice
-    total = sum(durations)
+    total = sum(durations) * 1.08
     bed = out.with_suffix(".bed.wav")
     synth_lullaby(total, f"song-{lang}", bed)
     key = f"line_{lang}"
-    inputs, delays, t = ["-i", str(bed)], [], 0.0
+    inputs, delays, t, truth = ["-i", str(bed)], [], 0.0, []
     for i, (s, d) in enumerate(zip(scenes, durations)):
         v = out.with_suffix(f".v{i}.wav")
         _mock_voice(s[key], v)
         inputs += ["-i", str(v)]
+        truth.append(round(t + 0.4, 3))
         ms = int((t + 0.4) * 1000)
         delays.append(f"[{i + 1}:a]aformat=sample_rates=44100:channel_layouts=stereo,adelay={ms}|{ms}[d{i}]")
-        t += d
+        t += d * 1.08  # drift: the song is slower than planned
     n = len(scenes)
     fc = ";".join(delays + ["[0:a]" + "".join(f"[d{i}]" for i in range(n)) + f"amix=inputs={n + 1}:normalize=0[a]"])
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", fc, "-map", "[a]",
                     "-t", f"{total:.2f}", "-c:a", "libmp3lame", "-q:a", "4", str(out)], check=True)
     for f in out.parent.glob(out.stem + ".*.wav"):
         f.unlink()
+    out.with_suffix(".truth.json").write_text(__import__("json").dumps(truth))
 
 
 def mock_clip(first: Path, last: Path | None, out: Path) -> None:

@@ -111,17 +111,16 @@ def test_character_modes_and_deletes():
     assert o["hashtags"] and all(h.startswith("#") for h in o["hashtags"]) and o["tags"]
     assert sum(len(t) + 1 for t in o["tags"]) <= 500
     # add German later: visuals reused, only lyrics + voice + metadata are new
-    silent = config.OUTPUT_DIR / j2["id"] / "video_silent.mp4"
-    before = silent.stat().st_mtime
     assert client.post(f"/api/jobs/{j2['id']}/languages/de").json()["ok"]
     time.sleep(1)
     j3 = _wait(j2["id"])
     assert j3["status"] == "done", j3.get("error")
     assert set(j3["outputs"]) == {"en", "de"} and j3["script"]["scenes"][0]["line_de"]
-    assert silent.stat().st_mtime == before                      # no re-render of visuals
+    kf = config.OUTPUT_DIR / j2["id"] / j3["keyframes"][0]
+    assert kf.exists()                                            # same keyframes, re-timed to German audio
     assert "image" not in j3["cost"]["by_kind"] or j3["cost"]["by_kind"]["image"]["usd"] == 0
     de = config.OUTPUT_DIR / j2["id"] / j3["outputs"]["de"]["video"]
-    assert de.exists() and abs(tts_dur(de) - j3["timeline"]["total"]) < 0.5
+    assert de.exists() and abs(tts_dur(de) - j3["timelines"]["de"]["total"]) < 0.3
     assert client.post(f"/api/jobs/{j2['id']}/languages/xx").status_code == 400
     # delete video + character
     assert client.delete(f"/api/jobs/{j2['id']}").json()["ok"]
@@ -142,4 +141,27 @@ def test_sung_vocals_job():
         time.sleep(1)
     assert j["status"] == "done", j.get("error")
     assert "sung" in j["cost"]["by_kind"] and "tts" not in j["cost"]["by_kind"]
-    assert (config.OUTPUT_DIR / job["id"] / j["outputs"]["hi"]["video"]).exists()
+    out = config.OUTPUT_DIR / job["id"] / j["outputs"]["hi"]["video"]
+    assert out.exists()
+    # SYNC: the song drifts from the plan (as the real API does); every picture must still change
+    # exactly `voice_lead` seconds before its line is sung, measured, not planned.
+    tl = j["timelines"]["hi"]
+    truth = [float(x) for x in __import__("json").loads(next((config.CACHE_DIR / "songs").glob("*.truth.json")).read_text())]
+    assert tl["sync"] == "mock-measured"
+    for i in range(1, len(truth)):
+        assert abs((truth[i] - tl["starts"][i]) - tl["voice_lead"]) < 0.02, (i, truth[i], tl["starts"][i])
+    assert truth[-1] - truth[-2] > 0  # drift really happened vs. the plan
+    assert abs(tts_dur(out) - tl["total"]) < 0.3
+
+
+def test_spoken_sync_math():
+    """Spoken mode: each trimmed voice line starts voice_lead after its scene starts and ends
+    before the next scene's cross-fade begins."""
+    j = next(x for x in client.get("/api/jobs").json() if (x["params"] or {}).get("vocals", "tts") == "tts"
+             and x["status"] == "done")
+    full = client.get(f"/api/jobs/{j['id']}").json()
+    for lang, tl in full["timelines"].items():
+        assert 0.3 <= tl["voice_lead"] < tl["xfade"]
+        for i in range(len(tl["starts"]) - 1):
+            # next scene starts no earlier than this scene's line + lead
+            assert tl["starts"][i + 1] - tl["starts"][i] >= tl["voice_lead"] + 0.5

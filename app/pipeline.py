@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 import traceback
@@ -188,7 +189,9 @@ class Job:
         self.save()
 
     def _xfade(self) -> float:
-        return 0.4 if self.params.get("engine") == "veo" else config.CROSSFADE_SEC
+        """Cross-fade length, a whole number of frames (so scene starts stay on frame boundaries)."""
+        xf = 0.4 if self.params.get("engine") == "veo" else config.CROSSFADE_SEC
+        return round(xf * config.FPS) / config.FPS
 
     def _voice_lead(self) -> float:
         """Line starts when the cross-fade is ~60 % done: the new picture is clearly on screen,
@@ -201,6 +204,7 @@ class Job:
         durations = [max(min_len, lead + v["duration"] + TAIL + xf) for v in voices]
         if self.params.get("engine") != "veo":  # follow the music's bars
             durations = render.snap_to_bars(durations, xf, toddler.MUSIC["bpm"])
+        durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1]
 
@@ -217,21 +221,25 @@ class Job:
             bounds = [0.0] + [max(0.0, t - lead) for t in planned_starts[1:]]
             durations = [b2 - b1 + xf for b1, b2 in zip(bounds, bounds[1:])] + [max(xf + 1, total - bounds[-1])]
             line_t, method = planned_starts, "plan"
+        durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1], line_t, method
 
     def _render_visuals(self, lang: str, durations: list[float]) -> Path:
         """Re-time the (already paid for) keyframes / Veo clips to this language's audio. ffmpeg only."""
         scenes = self.state["script"]["scenes"]
-        clips: list[Path] = []
-        for i, s in enumerate(scenes):
-            clip = self.dir / f"clip_{lang}_{i:02}.mp4"
+        clips = [self.dir / f"clip_{lang}_{i:02}.mp4" for i in range(len(scenes))]
+
+        def one(i: int) -> None:
             if self.params.get("engine") == "veo":
-                render.fit_clip(Path(self.state["veo_clips"][i]), durations[i], clip)
+                render.fit_clip(Path(self.state["veo_clips"][i]), durations[i], clips[i])
             else:
                 render.image_to_clip(self.dir / self.state["keyframes"][i], durations[i],
-                                     s.get("camera", "slow zoom in"), clip)
-            clips.append(clip)
+                                     scenes[i].get("camera", "slow zoom in"), clips[i])
+        # scenes are independent ffmpeg jobs: use all CPU cores (motion interpolation is heavy)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(len(scenes), os.cpu_count() or 2))) as pool:
+            list(pool.map(one, range(len(scenes))))
         silent = self.dir / f"video_silent_{lang}.mp4"
         render.crossfade_concat(clips, durations, self._xfade(), silent)
         for c in clips:
@@ -295,12 +303,27 @@ class Job:
         for stale in self.dir.glob(f"{Path(clean).stem}_*vertical_*.mp4"):  # Shorts/Reels are re-cut on demand
             stale.unlink()
         if not lyrics and logo is None:
-            o["video"] = clean
+            main = clean
         else:
             out = self.dir / clean.replace(".mp4", "_lyrics.mp4" if lyrics else "_branded.mp4")
             lyrics_overlay.finalize(self.dir / clean, self.dir / o["captions"] if lyrics else None, lang, logo, out)
-            o["video"] = out.name
+            main = out.name
+        o["video_main"] = main       # rhyme only: used for Shorts/Reels (no intro/outro there)
+        frozen = render.freezes(self.dir / main)
+        o["smoothness"] = {"frozen": frozen, "ok": not frozen}
         o["logo"] = logo is not None
+        # channel intro + outro around the full video (YouTube, Facebook, download)
+        intro, outro = branding.clip_path("intro"), branding.clip_path("outro")
+        if o.get("bookends", self.params.get("bookends", True)) and (intro or outro):
+            full = self.dir / main.replace(".mp4", "_full.mp4")
+            offset = render.bookend(self.dir / main, intro, outro, full, self.state["script"]["title_en"])
+            o["video"], o["intro_seconds"], o["bookends"] = full.name, round(offset, 3), True
+            o["captions_upload"] = render.shift_srt(self.dir / o["captions"], offset,
+                                                    self.dir / f"captions_{lang}_full.srt").name
+        else:
+            o["video"], o["intro_seconds"], o["bookends"] = main, 0.0, False
+            o["captions_upload"] = o["captions"]
+        o["duration_total"] = round(tts.media_duration(self.dir / o["video"]), 1)
         self.save()
 
     def _set_lyrics(self, lang: str, on: bool) -> None:

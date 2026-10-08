@@ -34,10 +34,10 @@ def _cut_point(state: dict, lang: str, limit: float, total: float) -> float:
 
 def vertical_version(job, lang: str, limit: float) -> Path:
     o = job.state["outputs"][lang]
-    src = job.dir / o["video"]
+    src = job.dir / (o.get("video_main") or o["video"])   # Shorts/Reels: rhyme only, no intro/outro
     total = tts.media_duration(src)
     cut = _cut_point(job.state, lang, limit, total)
-    out = job.dir / f"{Path(o['video']).stem}_vertical_{int(cut)}s.mp4"
+    out = job.dir / f"{src.stem}_vertical_{int(cut)}s.mp4"
     if not out.exists():
         render.make_vertical(src, out, cut)
     return out
@@ -78,7 +78,7 @@ def run(job, lang: str, targets: list[str], privacy: str | None, publish_at: str
                 if short and yt_url:
                     desc = f"▶ Full video: {yt_url}\n\n" + desc
                 res = youtube.upload(video, o["title"], desc, o["tags"], lang, thumbnail=job.dir / o["thumbnail"],
-                                     captions=None if short else job.dir / o["captions"],
+                                     captions=None if short else job.dir / (o.get("captions_upload") or o["captions"]),
                                      privacy=privacy, short=short, publish_at=publish_at)
             elif t == "facebook":
                 url = public_urls.file_url(job.id, o["video"])

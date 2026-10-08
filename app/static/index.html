@@ -58,6 +58,7 @@ video{width:100%;border-radius:12px;background:#000}
   <label>Vocals</label>
   <div class="seg" id="vocals"><button data-v="tts" class="on">🗣 Spoken rhyme (Google TTS, ~₹3)</button><button data-v="sung">🎤 Sung song (ElevenLabs, ~₹35/lang)</button></div>
   <label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:12px"><input type="checkbox" id="lyricsOn" checked> 🔤 Show animated lyrics on screen <span class="est" style="margin:0">(big bouncy words that light up as they're sung)</span></label>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:6px"><input type="checkbox" id="bookendsOn" checked> 🎬 Add Sunave Kids intro &amp; outro <span class="est" style="margin:0">(full videos only — Shorts/Reels start straight with the rhyme)</span></label>
   <label>Output videos (one separate MP4 per language, same visuals)</label>
   <div class="row" id="langs"></div>
   <div class="est" style="margin:4px 0 0">You can add more languages to a finished video later — only the voice is regenerated, visuals are reused.</div>
@@ -97,7 +98,7 @@ $('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
 let LANGS=[];const LNAME=c=>{const l=LANGS.find(x=>x.code===c);return l?`${l.name}${l.native!==l.name?' · '+l.native:''}`:c};
 
 function params(){const languages=[...document.querySelectorAll('#langs input:checked')].map(x=>x.value);
- return{mode,engine,vocals,languages,lyrics_on_screen:$('#lyricsOn').checked,character_mode:charMode,characters:charMode==='library'?[...selected]:[],character_description:charMode==='describe'?($('#charDesc').value.trim()||null):null,preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
+ return{mode,engine,vocals,languages,lyrics_on_screen:$('#lyricsOn').checked,bookends:$('#bookendsOn').checked,character_mode:charMode,characters:charMode==='library'?[...selected]:[],character_description:charMode==='describe'?($('#charDesc').value.trim()||null):null,preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
 
 async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
  $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
@@ -127,7 +128,7 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
  const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)',sung:'Sung song (ElevenLabs)'};
  const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':k==='sung'?'min':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
  
- const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${LNAME(lang)} <span class="badge">${o.duration}s</span> ${o.sync==='plan'?'<span class="badge" style="background:#ffe3e3" title="Could not measure where the song lines are; pictures follow the plan and may drift. Give the ElevenLabs key Forced Alignment access.">⚠ timing estimated</span>':o.sync?'<span class="badge" style="background:#dff5df" title="Pictures are cut to where each line is actually heard">✓ synced</span>':''}</h3>
+ const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${LNAME(lang)} <span class="badge">${o.duration_total||o.duration}s${o.bookends?' incl. intro/outro':''}</span> ${o.smoothness?(o.smoothness.ok?'<span class="badge" style="background:#dff5df" title="Checked: no frozen or hanging moments">✓ smooth</span> ':`<span class="badge" style="background:#ffe3e3" title="Still moments at ${o.smoothness.frozen.map(f=>f.start+'s').join(', ')}">⚠ ${o.smoothness.frozen.length} still moment(s)</span> `):''}${o.sync==='plan'?'<span class="badge" style="background:#ffe3e3" title="Could not measure where the song lines are; pictures follow the plan and may drift. Give the ElevenLabs key Forced Alignment access.">⚠ timing estimated</span>':o.sync?'<span class="badge" style="background:#dff5df" title="Pictures are cut to where each line is actually heard">✓ synced</span>':''}</h3>
   <video controls preload="metadata" src="/api/jobs/${j.id}/files/${o.video}" poster="/api/jobs/${j.id}/files/${o.thumbnail}"></video>
   <div style="font-size:13px;margin:6px 0"><b>${esc(o.title)}</b> <button class="small" style="padding:1px 6px" onclick="copyTxt(this,${esc(JSON.stringify(o.title||''))})">📋</button>
    <div style="color:#2a5bd7;margin:4px 0">${(o.hashtags||[]).map(esc).join(' ')}</div>
@@ -194,8 +195,18 @@ async function loadAccounts(){SOC=await api('/api/social/status');const a=$('#ac
 async function loadBranding(){const b=await api('/api/branding');const box=$('#brandBox');
  box.innerHTML=`${b.logo?`<div style="background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/16px 16px;border-radius:10px;padding:8px;display:inline-block"><img src="${b.logo_url}?t=${Date.now()}" style="max-height:70px;max-width:100%"></div><br>`:'No logo yet. '}
   <div class="row" style="margin-top:6px"><label class="small" style="cursor:pointer;margin:0">${b.logo?'🔁 Replace logo':'⬆ Upload logo'}<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="uploadLogo(this)"></label>
-  ${b.logo?`<button class="small" onclick="applyLogoAll()">✨ Apply logo to all existing videos</button><button class="small" onclick="delLogo()">Remove logo</button>`:''}</div>
-  <div style="margin-top:4px">Placed at the very bottom (${esc(b.position)}) of every new video, small and slightly transparent; lyrics sit just above it. White background is removed automatically. Shorts &amp; Reels inherit it.</div><div id="brandProg"></div>`}
+  ${b.logo?`<button class="small" onclick="applyLogoAll()">✨ Apply logo, intro &amp; outro to all existing videos</button><button class="small" onclick="delLogo()">Remove logo</button>`:''}</div>
+  <div style="margin-top:4px">Placed at the very bottom (${esc(b.position)}) of every new video, small and slightly transparent; lyrics sit just above it. White background is removed automatically. Shorts &amp; Reels inherit it.</div>
+  <h3 style="margin:14px 0 4px">🎬 Intro &amp; outro</h3><div class="out">${['intro','outro'].map(k=>{const c=b.clips[k];return `<div><b>${k==='intro'?'Intro (before every video)':'Outro (after every video)'}</b> <span class="badge">${c.url?(c.source==='bundled'?'Sunave Kids default':'your upload'):'off'}</span>
+   ${c.url?`<video src="${c.url}?t=${Date.now()}" controls muted preload="metadata" style="margin-top:4px;max-height:150px"></video>`:''}
+   <div class="row" style="margin-top:4px"><label class="small" style="cursor:pointer;margin:0">⬆ Replace<input type="file" accept="video/mp4,video/quicktime,video/webm" style="display:none" onchange="uploadClip('${k}',this)"></label>
+   ${c.url?`<button class="small" onclick="clipOff('${k}')">Turn off</button>`:''}${c.source!=='bundled'?`<button class="small" onclick="clipDefault('${k}')">Use default</button>`:''}</div></div>`}).join('')}</div>
+  <div style="margin-top:4px">Added around full videos (YouTube, Facebook, download); YouTube captions are shifted to match. After changing, click ✨ Apply to all existing videos.</div>
+  ${b.logo?'':`<div class="row" style="margin-top:6px"><button class="small" onclick="applyLogoAll()">✨ Apply intro/outro to all existing videos</button></div>`}<div id="brandProg"></div>`}
+async function uploadClip(k,inp){const f=inp.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);
+ try{const r=await fetch('/api/branding/clip/'+k,{method:'POST',body:fd});if(!r.ok)throw new Error((await r.json()).detail||r.status);await loadBranding();alert('Saved. New videos use it; click “✨ Apply … to all existing videos” to update old ones.')}catch(e){alert(e.message)}}
+async function clipOff(k){if(!confirm(`Turn the ${k} off for new videos?`))return;await api('/api/branding/clip/'+k,{method:'DELETE'});loadBranding()}
+async function clipDefault(k){await api('/api/branding/clip/'+k+'?restore_default=true',{method:'DELETE'});loadBranding()}
 async function uploadLogo(inp){const f=inp.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);
  try{const r=await fetch('/api/branding/logo',{method:'POST',body:fd});if(!r.ok)throw new Error(await r.text());await loadBranding();
   if(confirm('Logo saved — new videos will carry it. Apply it to all existing videos now too? (ffmpeg only, no AI cost; a minute or two per video)'))applyLogoAll(true)}catch(e){alert(e.message)}}

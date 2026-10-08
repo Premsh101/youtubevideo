@@ -121,7 +121,7 @@ def finalize(video: Path, captions: Path | None, lang: str, logo: Path | None, o
         label = "lo"
     chain.append(f"[{label}]format=yuv420p[vout]")
     subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
-                    "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", "0:a?", "-shortest",
+                    "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", "0:a?",
                     "-c:v", "libx264", "-preset", "medium", "-crf", "19",
                     "-c:a", "copy", "-movflags", "+faststart", out.name],
                    check=True, cwd=video.parent)

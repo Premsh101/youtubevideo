@@ -14,6 +14,7 @@ from starlette.responses import Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from . import tts
 from . import (branding, characters, config, costs, elevenlabs, languages, pipeline, presets, public_urls, publish,
                script_gen, social, youtube)
 from .costs import CostLedger
@@ -172,6 +173,7 @@ class JobIn(BaseModel):
     preset: str | None = None
     target_seconds: int = Field(config.TARGET_SECONDS, ge=30, le=240)
     lyrics_on_screen: bool = True
+    bookends: bool = True
 
 
 @app.post("/api/estimate")
@@ -253,8 +255,51 @@ def guide() -> str:
 
 @app.get("/api/branding")
 def api_branding() -> dict:
+    clips = {}
+    for k in branding.CLIP_KINDS:
+        p = branding.clip_path(k)
+        clips[k] = {"url": f"/api/branding/clip/{k}.mp4" if p else None,
+                    "source": None if p is None else ("bundled" if branding.BUNDLED in p.parents else "uploaded")}
     return {"logo": branding.has_logo(), "logo_url": "/api/branding/logo.png" if branding.has_logo() else None,
-            "position": branding.POSITION, "channel_name": config.CHANNEL_NAME}
+            "position": branding.POSITION, "channel_name": config.CHANNEL_NAME, "clips": clips}
+
+
+@app.get("/api/branding/clip/{kind}.mp4")
+def api_clip(kind: str) -> FileResponse:
+    p = branding.clip_path(kind) if kind in branding.CLIP_KINDS else None
+    if not p:
+        raise HTTPException(404)
+    return FileResponse(p, media_type="video/mp4", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/branding/clip/{kind}")
+async def api_upload_clip(kind: str, file: UploadFile = File(...)) -> dict:
+    if kind not in branding.CLIP_KINDS:
+        raise HTTPException(404)
+    data = await file.read()
+    if len(data) > 200 * 1024 * 1024:
+        raise HTTPException(413, "Clip too large (max 200 MB)")
+    tmp = branding.DIR / f"_check_{kind}.mp4"
+    tmp.write_bytes(data)
+    try:
+        if tts.media_duration(tmp) > 30:
+            raise HTTPException(400, "Keep intro/outro under 30 seconds — long intros make toddlers (and YouTube) leave")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "That file isn't a readable video")
+    finally:
+        tmp.unlink(missing_ok=True)
+    branding.save_clip(kind, data)
+    return api_branding()
+
+
+@app.delete("/api/branding/clip/{kind}")
+def api_remove_clip(kind: str, restore_default: bool = False) -> dict:
+    if kind not in branding.CLIP_KINDS:
+        raise HTTPException(404)
+    (branding.restore_default_clip if restore_default else branding.remove_clip)(kind)
+    return api_branding()
 
 
 @app.post("/api/branding/logo")

@@ -3,8 +3,10 @@
 services:
   studio:
     build: .
-    ports:
-      - "8000:8000"
+    # No host port: Coolify's Traefik proxies your domain to the container's port 8000.
+    # (Publishing 8000 collides with the Coolify dashboard itself.)
+    expose:
+      - "8000"
     environment:
       - VERTEX_SA_JSON=${VERTEX_SA_JSON}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}

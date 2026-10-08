@@ -69,7 +69,7 @@ FPS = int(os.getenv("FPS", "24"))
 CROSSFADE_SEC = float(os.getenv("CROSSFADE_SEC", "0.8"))
 TARGET_SECONDS = int(os.getenv("TARGET_SECONDS", "120"))
 VEO_CLIP_SECONDS = 8  # fixed by the Veo API
-SUBTITLE_FONT = os.getenv("SUBTITLE_FONT")  # path to a .ttf with Devanagari glyphs, optional
+FONTS_DIR = os.getenv("FONTS_DIR", str(ROOT / "fonts"))  # rounded Baloo fonts for on-screen lyrics (scripts/get_fonts.sh)
 
 # --- Pricing (USD) ----------------------------------------------------------
 USD_TO_INR = float(os.getenv("USD_TO_INR", "84"))

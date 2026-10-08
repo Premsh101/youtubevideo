@@ -105,6 +105,28 @@ def api_languages() -> list[dict]:
     return languages.listing()
 
 
+@app.post("/api/jobs/{job_id}/lyrics")
+def api_set_lyrics(job_id: str, on: bool = True, lang: str = "all") -> dict:
+    """Add (or remove) animated on-screen lyrics on an existing video — any language, old videos too."""
+    live = _jobs.get(job_id)
+    if live and live.state["status"] in ("running", "waiting", "queued"):
+        raise HTTPException(409, "this video is still being processed")
+    try:
+        job = pipeline.Job.load(job_id)
+    except KeyError:
+        raise HTTPException(404)
+    outs = job.state.get("outputs") or {}
+    langs = list(outs) if lang == "all" else [lang]
+    if not langs or any(x not in outs for x in langs):
+        raise HTTPException(404, "no such language version")
+    for x in langs:
+        if not (job.dir / outs[x]["captions"]).exists():
+            raise HTTPException(409, f"captions for {x} are missing; lyrics need their timings")
+    _jobs[job_id] = job
+    threading.Thread(target=job.set_lyrics, args=(langs, on), daemon=True, name=f"lyrics-{job_id}").start()
+    return {"ok": True, "languages": langs, "on": on}
+
+
 @app.post("/api/jobs/{job_id}/languages/{lang}")
 def api_add_language(job_id: str, lang: str) -> dict:
     """Voice an existing video in another language: reuses all visuals, only audio + text are new."""
@@ -142,6 +164,7 @@ class JobIn(BaseModel):
     poem: str | None = None
     preset: str | None = None
     target_seconds: int = Field(config.TARGET_SECONDS, ge=30, le=240)
+    lyrics_on_screen: bool = True
 
 
 @app.post("/api/estimate")

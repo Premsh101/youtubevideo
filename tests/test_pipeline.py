@@ -71,12 +71,9 @@ def test_full_job_both_languages_with_auto_casting():
     assert client.get("/api/jobs").json()[0]["id"] == job["id"]
     assert j["attempts"] == 1  # the simulated 429s were absorbed by per-call retries, not a job restart
     # resume on a finished job is a no-op that costs nothing (everything cached)
-    r = client.post(f"/api/jobs/{job['id']}/resume").json()
-    for _ in range(120):
-        r = client.get(f"/api/jobs/{job['id']}").json()
-        if r["status"] == "done":
-            break
-        time.sleep(1)
+    client.post(f"/api/jobs/{job['id']}/resume")
+    time.sleep(1)
+    r = _wait(job["id"])
     assert r["status"] == "done" and r["cost"]["total_usd"] == 0
     assert r["cost"]["total_inr_all_attempts"] >= j["cost"]["total_inr"]
 
@@ -192,3 +189,39 @@ def test_add_language_to_old_video_reuses_everything():
     assert any(i["kind"] == "tts" for i in items)                            # only the new voice
     en = config.OUTPUT_DIR / j["id"] / j2["outputs"]["en"]["video"]
     assert abs(tts_dur(en) - j2["timelines"]["en"]["total"]) < 0.3
+
+
+def test_lyrics_on_screen_toggle_and_old_videos():
+    """New videos get animated lyrics by default; they can be removed/added later at no API cost,
+    including on videos made before this feature (no video_clean / lyrics fields)."""
+    r = client.post("/api/jobs", json={"mode": "2d", "languages": ["hi"], "preset": "machli", "target_seconds": 40})
+    j = _wait(r.json()["id"])
+    assert j["status"] == "done", j.get("error")
+    o = j["outputs"]["hi"]
+    d = config.OUTPUT_DIR / j["id"]
+    assert o["lyrics_on_screen"] and o["video"].endswith("_lyrics.mp4") and (d / o["video"]).exists()
+    assert (d / "lyrics_hi.ass").read_text(encoding="utf-8").count("Dialogue:") == len(j["script"]["scenes"])
+    paid = j["cost"]["total_usd"]
+
+    # remove → back to the clean video
+    assert client.post(f"/api/jobs/{j['id']}/lyrics?lang=hi&on=false").json()["ok"]
+    time.sleep(1)
+    j2 = _wait(j["id"])
+    assert not j2["outputs"]["hi"]["lyrics_on_screen"] and j2["outputs"]["hi"]["video"] == o["video_clean"]
+
+    # simulate an old video: no lyrics fields at all, then add lyrics
+    f = d / "job.json"
+    old = __import__("json").loads(f.read_text())
+    for k in ("video_clean", "lyrics_on_screen"):
+        old["outputs"]["hi"].pop(k, None)
+    f.write_text(__import__("json").dumps(old))
+    from app import main as m
+    m._jobs.pop(j["id"], None)
+    (d / o["video"]).unlink()
+    assert client.post(f"/api/jobs/{j['id']}/lyrics?lang=all&on=true").json()["ok"]
+    time.sleep(1)
+    j3 = _wait(j["id"])
+    assert j3["status"] == "done", j3.get("error")
+    assert j3["outputs"]["hi"]["lyrics_on_screen"] and (d / j3["outputs"]["hi"]["video"]).exists()
+    assert j3["cost"]["total_usd"] == 0 and paid >= 0     # toggling lyrics never costs API money
+    assert client.post(f"/api/jobs/{j['id']}/lyrics?lang=fr").status_code == 404

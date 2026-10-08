@@ -56,6 +56,7 @@ video{width:100%;border-radius:12px;background:#000}
   <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
   <label>Vocals</label>
   <div class="seg" id="vocals"><button data-v="tts" class="on">🗣 Spoken rhyme (Google TTS, ~₹3)</button><button data-v="sung">🎤 Sung song (ElevenLabs, ~₹35/lang)</button></div>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:12px"><input type="checkbox" id="lyricsOn" checked> 🔤 Show animated lyrics on screen <span class="est" style="margin:0">(big bouncy words that light up as they're sung)</span></label>
   <label>Output videos (one separate MP4 per language, same visuals)</label>
   <div class="row" id="langs"></div>
   <div class="est" style="margin:4px 0 0">You can add more languages to a finished video later — only the voice is regenerated, visuals are reused.</div>
@@ -95,7 +96,7 @@ $('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
 let LANGS=[];const LNAME=c=>{const l=LANGS.find(x=>x.code===c);return l?`${l.name}${l.native!==l.name?' · '+l.native:''}`:c};
 
 function params(){const languages=[...document.querySelectorAll('#langs input:checked')].map(x=>x.value);
- return{mode,engine,vocals,languages,character_mode:charMode,characters:charMode==='library'?[...selected]:[],character_description:charMode==='describe'?($('#charDesc').value.trim()||null):null,preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
+ return{mode,engine,vocals,languages,lyrics_on_screen:$('#lyricsOn').checked,character_mode:charMode,characters:charMode==='library'?[...selected]:[],character_description:charMode==='describe'?($('#charDesc').value.trim()||null):null,preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
 
 async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
  $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
@@ -136,6 +137,7 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
     <button class="small" onclick="copyTxt(this,${esc(JSON.stringify((o.tags||[]).join(', ')))})">📋 Copy tags</button>
    </details></div>
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
+  <button class="small" onclick="setLyrics('${j.id}','${lang}',${o.lyrics_on_screen?'false':'true'})">${o.lyrics_on_screen?'🚫 Remove on-screen lyrics':'🔤 Add on-screen lyrics'}</button>
   ${o.youtube?`<a class="small" style="text-decoration:none" href="${o.youtube.url}" target="_blank">▶ On YouTube (${o.youtube.privacy})</a>`:`<button class="small" onclick="publish('${j.id}','${lang}',this)">📤 Post to YouTube</button>`}</div></div>`).join('');
  c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
   <div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>
@@ -166,6 +168,8 @@ function langCost(){const j=lastJob,sel=$('#addLang');if(!j||!sel||!sel.value)re
 async function addLang(id){const lang=$('#addLang').value;if(!lang)return;if(!confirm(`Create the ${LNAME(lang)} version of this video?\n\n${$('#langCostLbl').textContent}`))return;
  try{await api(`/api/jobs/${id}/languages/${lang}`,{method:'POST'});watch(id)}catch(e){alert(e.message)}}
 function copyTxt(btn,t){navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='✓ Copied';setTimeout(()=>btn.textContent=o,1200)})}
+async function setLyrics(id,lang,on){if(!confirm(on?`Draw animated lyrics on the ${LNAME(lang)} video? Free — takes about a minute. If it's already on YouTube, upload it again to update.`:`Remove the on-screen lyrics from the ${LNAME(lang)} video? (The clean version is kept, nothing is regenerated.)`))return;
+ try{await api(`/api/jobs/${id}/lyrics?lang=${lang}&on=${on}`,{method:'POST'});watch(id)}catch(e){alert(e.message)}}
 async function resume_(id){await api('/api/jobs/'+id+'/resume',{method:'POST'});watch(id)}
 async function del_(id){if(!confirm('Delete this video and its files from the server? (Downloaded/YouTube copies are unaffected)'))return;try{await api('/api/jobs/'+id,{method:'DELETE'})}catch(e){return alert(e.message)}if(current===id||$('#resultCard').innerHTML.includes(id))$('#resultCard').style.display='none';loadJobs()}
 async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${(j.languages||[]).map(l=>`<span class="badge">${l}</span>`).join(' ')} ${j.cost?inr(j.cost.total_inr_all_attempts||j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''} <button class="small" style="float:right;padding:2px 8px" title="Delete video" onclick="del_('${j.id}')">🗑</button></div>`).join(''):'<i>None yet</i>'}

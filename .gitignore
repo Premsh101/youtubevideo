@@ -5,3 +5,4 @@ data/
 .test_data/
 .env
 *.json.secret
+fonts/

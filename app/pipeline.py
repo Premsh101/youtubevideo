@@ -167,16 +167,9 @@ class Job:
         self.save()
 
         # 4. motion source per scene (Veo clips are generated once and re-timed per language)
-        if engine == "veo":
-            raw = []
-            for i, s in enumerate(scenes):
-                self.step(f"Animating scene {i + 1}/{len(scenes)} with Veo", 0.45 + 0.15 * i / len(scenes))
-                motion = (f"{style}. {s['visual']}. Camera: {s.get('camera', 'slow zoom in')}. "
-                          "Very slow, gentle, smooth motion; characters move softly; no cuts.")
-                raw.append(str(generate_video_clip(motion, keyframes[i], keyframes[i + 1], self.ledger,
-                                                   f"veo scene {i + 1}")))
-            self.state["veo_clips"] = raw
         self.state["keyframes"] = [k.name for k in keyframes]
+        if engine == "veo":
+            self._veo_clips()
         self.save()
 
         # 5. each language: audio first, then the pictures are cut to where that audio's lines really are
@@ -289,11 +282,34 @@ class Job:
         }
         self.save()
 
+    def _veo_clips(self) -> None:
+        """Veo clip per scene. Same prompt + same keyframes → content-hash cache hit, so calling this
+        again for an existing video costs nothing."""
+        scenes = self.state["script"]["scenes"]
+        style = toddler.style_prompt(self.params.get("mode", "2d"))
+        kf = [self.dir / k for k in self.state["keyframes"]]
+        raw = []
+        for i, s in enumerate(scenes):
+            self.step(f"Animating scene {i + 1}/{len(scenes)} with Veo", 0.45 + 0.15 * i / len(scenes))
+            motion = (f"{style}. {s['visual']}. Camera: {s.get('camera', 'slow zoom in')}. "
+                      "Very slow, gentle, smooth motion; characters move softly; no cuts.")
+            raw.append(str(generate_video_clip(motion, kf[i], kf[i + 1] if i + 1 < len(kf) else None,
+                                               self.ledger, f"veo scene {i + 1}")))
+        self.state["veo_clips"] = raw
+
     def _add_language(self, lang: str) -> None:
-        """New language on an existing video: only lyrics, voice and metadata cost money;
-        the existing keyframes / Veo clips are re-timed to the new audio."""
-        if not self.state.get("keyframes") or not self.state.get("timelines"):
-            raise RuntimeError("This video was made before multi-language support; re-create it once to add languages.")
+        """New language on an existing video: lyrics only if missing, then voice/song and YouTube text.
+        Pictures are never regenerated; the existing keyframes (or Veo clips) are re-timed to the new audio.
+        Works for videos made by older versions too: their keyframe files are picked up from disk."""
+        if not self.state.get("script"):
+            raise RuntimeError("This video has no script saved; it has to be re-created.")
+        if not self.state.get("keyframes"):
+            found = sorted(p.name for p in self.dir.glob("keyframe_*.png"))
+            if len(found) < len(self.state["script"]["scenes"]):
+                raise RuntimeError("The pictures of this video are missing on the server; it has to be re-created.")
+            self.state["keyframes"] = found
+        if self.params.get("engine") == "veo" and len(self.state.get("veo_clips") or []) < len(self.state["script"]["scenes"]):
+            self._veo_clips()  # cache hit for clips already paid for
         self._produce_language(lang, 0.1)
         langs = self.params.setdefault("languages", [])
         if lang not in langs:

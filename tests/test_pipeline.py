@@ -10,6 +10,7 @@ os.environ["VIDEO_H"] = "360"
 os.environ["MOCK_FAIL_429"] = "2"       # first two image calls hit a simulated quota error
 os.environ["RETRY_BASE_SECONDS"] = "0.2"
 os.environ["IMAGE_RPM"] = "0"          # no pacing in tests
+os.environ["SMOOTH_MODE"] = "blend"    # fast interpolation in tests (production default: mci optical flow)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -116,7 +117,7 @@ def test_character_modes_and_deletes():
     kf = config.OUTPUT_DIR / j2["id"] / j3["keyframes"][0]
     assert kf.exists()                                            # same keyframes, re-timed to German audio
     assert "image" not in j3["cost"]["by_kind"] or j3["cost"]["by_kind"]["image"]["usd"] == 0
-    de = config.OUTPUT_DIR / j2["id"] / j3["outputs"]["de"]["video"]
+    de = config.OUTPUT_DIR / j2["id"] / j3["outputs"]["de"]["video_main"]
     assert de.exists() and abs(tts_dur(de) - j3["timelines"]["de"]["total"]) < 0.3
     assert client.post(f"/api/jobs/{j2['id']}/languages/xx").status_code == 400
     # delete video + character
@@ -138,7 +139,7 @@ def test_sung_vocals_job():
         time.sleep(1)
     assert j["status"] == "done", j.get("error")
     assert "sung" in j["cost"]["by_kind"] and "tts" not in j["cost"]["by_kind"]
-    out = config.OUTPUT_DIR / job["id"] / j["outputs"]["hi"]["video"]
+    out = config.OUTPUT_DIR / job["id"] / j["outputs"]["hi"]["video_main"]
     assert out.exists()
     # SYNC: the song drifts from the plan (as the real API does); every picture must still change
     # exactly `voice_lead` seconds before its line is sung, measured, not planned.
@@ -187,7 +188,7 @@ def test_add_language_to_old_video_reuses_everything():
     assert not any(i["kind"] == "image" and not i["cached"] for i in items)   # pictures reused
     assert not any(i["detail"] == "lyrics en" for i in items)                # lyrics already existed
     assert any(i["kind"] == "tts" for i in items)                            # only the new voice
-    en = config.OUTPUT_DIR / j["id"] / j2["outputs"]["en"]["video"]
+    en = config.OUTPUT_DIR / j["id"] / j2["outputs"]["en"]["video_main"]
     assert abs(tts_dur(en) - j2["timelines"]["en"]["total"]) < 0.3
 
 
@@ -199,7 +200,7 @@ def test_lyrics_on_screen_toggle_and_old_videos():
     assert j["status"] == "done", j.get("error")
     o = j["outputs"]["hi"]
     d = config.OUTPUT_DIR / j["id"]
-    assert o["lyrics_on_screen"] and o["video"].endswith("_lyrics.mp4") and (d / o["video"]).exists()
+    assert o["lyrics_on_screen"] and o["video_main"].endswith("_lyrics.mp4") and (d / o["video"]).exists()
     assert (d / "lyrics_hi.ass").read_text(encoding="utf-8").count("Dialogue:") == len(j["script"]["scenes"])
     paid = j["cost"]["total_usd"]
 
@@ -207,7 +208,7 @@ def test_lyrics_on_screen_toggle_and_old_videos():
     assert client.post(f"/api/jobs/{j['id']}/lyrics?lang=hi&on=false").json()["ok"]
     time.sleep(1)
     j2 = _wait(j["id"])
-    assert not j2["outputs"]["hi"]["lyrics_on_screen"] and j2["outputs"]["hi"]["video"] == o["video_clean"]
+    assert not j2["outputs"]["hi"]["lyrics_on_screen"] and j2["outputs"]["hi"]["video_main"] == o["video_clean"]
 
     # simulate an old video: no lyrics fields at all, then add lyrics
     f = d / "job.json"
@@ -327,9 +328,9 @@ def test_logo_watermark_new_and_existing_videos():
     r = client.post("/api/jobs", json={"mode": "2d", "languages": ["en"], "preset": "twinkle", "target_seconds": 30})
     j = _wait(r.json()["id"])
     o = j["outputs"]["en"]
-    assert o["logo"] and o["video"] != o["video_clean"]
+    assert o["logo"] and o["video_main"] != o["video_clean"]
     dd = config.OUTPUT_DIR / j["id"]
-    branded, clean = np.asarray(_frame(dd / o["video"])).astype(int), np.asarray(_frame(dd / o["video_clean"])).astype(int)
+    branded, clean = np.asarray(_frame(dd / o["video_main"])).astype(int), np.asarray(_frame(dd / o["video_clean"])).astype(int)
     h, w, _ = branded.shape
     corner = np.abs(branded[int(h * 0.88):, int(w * 0.75):] - clean[int(h * 0.88):, int(w * 0.75):]).mean()
     top = np.abs(branded[: int(h * 0.3)] - clean[: int(h * 0.3)]).mean()
@@ -345,6 +346,53 @@ def test_logo_watermark_new_and_existing_videos():
             break
         time.sleep(1)
     old2 = client.get(f"/api/jobs/{old['id']}").json()
-    assert old2["outputs"]["en"]["logo"] and old2["outputs"]["en"]["video"].endswith("_branded.mp4")
+    assert old2["outputs"]["en"]["logo"] and old2["outputs"]["en"]["video_main"].endswith("_branded.mp4")
     assert old2["cost"]["total_usd"] == 0
     client.delete("/api/branding/logo")
+
+
+
+def test_intro_outro_bookends():
+    """Full videos = intro + rhyme + outro; captions shift by the intro; Shorts/Reels use the rhyme only;
+    unticking the option gives the rhyme alone."""
+    from app import branding
+    assert branding.clip_path("intro") and branding.clip_path("outro")       # bundled Sunave Kids clips
+    r = client.post("/api/jobs", json={"mode": "2d", "languages": ["en"], "preset": "twinkle", "target_seconds": 30})
+    j = _wait(r.json()["id"])
+    assert j["status"] == "done", j.get("error")
+    o, d = j["outputs"]["en"], config.OUTPUT_DIR / j["id"]
+    full, main = tts_dur(d / o["video"]), tts_dur(d / o["video_main"])
+    assert o["bookends"] and abs(full - (main + tts_dur(branding.clip_path("intro")) + tts_dur(branding.clip_path("outro")))) < 0.3
+    sr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=sample_rate",
+                         "-of", "csv=p=0", str(d / o["video"])], capture_output=True, text=True).stdout.strip()
+    assert sr == "48000"
+    first_main = (d / o["captions"]).read_text().split("\n")[1].split(" --> ")[0]
+    first_full = (d / o["captions_upload"]).read_text().split("\n")[1].split(" --> ")[0]
+    to_s = lambda t: int(t[:2]) * 3600 + int(t[3:5]) * 60 + int(t[6:8]) + int(t[9:]) / 1000
+    assert abs(to_s(first_full) - to_s(first_main) - o["intro_seconds"]) < 0.01
+
+    r = client.post("/api/jobs", json={"mode": "2d", "languages": ["en"], "preset": "twinkle", "target_seconds": 30,
+                                        "bookends": False})
+    j2 = _wait(r.json()["id"])
+    o2 = j2["outputs"]["en"]
+    assert not o2["bookends"] and o2["video"] == o2["video_main"] and o2["captions_upload"] == o2["captions"]
+
+    # turning the intro off globally applies to new videos
+    assert client.delete("/api/branding/clip/intro").json()["clips"]["intro"]["url"] is None
+    assert client.delete("/api/branding/clip/intro?restore_default=true").json()["clips"]["intro"]["source"] == "bundled"
+
+
+
+def test_veo_scenes_never_freeze():
+    """Veo clips are 8 s; scenes that need longer must be time-remapped, never held on a frozen frame,
+    and every scene must be frame-exact so audio and video stay in sync."""
+    r = client.post("/api/jobs", json={"mode": "3d", "engine": "veo", "languages": ["en"], "preset": "twinkle",
+                                        "target_seconds": 60, "bookends": False})
+    j = _wait(r.json()["id"])
+    assert j["status"] == "done", j.get("error")
+    o, tl = j["outputs"]["en"], j["timelines"]["en"]
+    assert any(d > 8.5 for d in tl["durations"])                  # some scenes really needed stretching
+    assert all(abs(d * 24 - round(d * 24)) < 1e-6 for d in tl["durations"])   # whole frames
+    assert o["smoothness"]["ok"], o["smoothness"]
+    main = config.OUTPUT_DIR / j["id"] / o["video_main"]
+    assert abs(tts_dur(main) - tl["total"]) < 0.1

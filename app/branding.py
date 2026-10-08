@@ -133,3 +133,36 @@ def lyrics_bottom_margin(video_w: int, video_h: int) -> int:
     if not has_logo():
         return base
     return max(base, logo_height_px(video_w) + round(video_h * MARGIN_PCT) + round(video_h * 0.012))
+
+
+# ------------------------------------------------------------------ intro / outro
+BUNDLED = Path(__file__).parent / "assets" / "branding"   # Sunave Kids defaults shipped with the app
+CLIP_KINDS = ("intro", "outro")
+
+
+def clip_path(kind: str) -> Path | None:
+    """Uploaded clip, else the bundled default — unless the user removed it."""
+    if (DIR / f"{kind}.disabled").exists():
+        return None
+    up = DIR / f"{kind}.mp4"
+    if up.exists():
+        return up
+    b = BUNDLED / f"{kind}.mp4"
+    return b if b.exists() else None
+
+
+def save_clip(kind: str, data: bytes) -> Path:
+    out = DIR / f"{kind}.mp4"
+    out.write_bytes(data)
+    (DIR / f"{kind}.disabled").unlink(missing_ok=True)
+    return out
+
+
+def remove_clip(kind: str) -> None:
+    (DIR / f"{kind}.mp4").unlink(missing_ok=True)
+    (DIR / f"{kind}.disabled").write_text("removed")
+
+
+def restore_default_clip(kind: str) -> None:
+    (DIR / f"{kind}.mp4").unlink(missing_ok=True)
+    (DIR / f"{kind}.disabled").unlink(missing_ok=True)

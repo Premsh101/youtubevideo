@@ -6,6 +6,8 @@ continuous Ken-Burns motion so nothing looks cut or stitched.
 """
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -20,9 +22,9 @@ def _run(cmd: list[str]) -> None:
 
 
 # ------------------------------------------------------------------ per-scene clips
-def _kenburns_expr(camera: str, frames: int) -> str:
-    z_in = f"1+0.16*on/{frames}"
-    z_out = f"1.16-0.16*on/{frames}"
+def _kenburns_expr(camera: str, frames: int, zoom: float = 0.16) -> str:
+    z_in = f"1+{zoom}*on/{frames}"
+    z_out = f"{1 + zoom}-{zoom}*on/{frames}"
     centre = "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
     if "zoom out" in camera:
         return f"z='{z_out}':{centre}"
@@ -45,11 +47,11 @@ def snap_to_bars(durations: list[float], xfade: float, bpm: int) -> list[float]:
     return out
 
 
-def image_to_clip(image: Path, duration: float, camera: str, out: Path) -> Path:
+def image_to_clip(image: Path, duration: float, camera: str, out: Path, zoom: float = 0.16) -> Path:
     frames = int(round(duration * config.FPS))
     vf = (
         f"scale=6000:-2,"  # upscale first so sub-pixel pans don't jitter
-        f"zoompan={_kenburns_expr(camera, frames)}:d={frames}:s={config.VIDEO_W}x{config.VIDEO_H}:fps={config.FPS},"
+        f"zoompan={_kenburns_expr(camera, frames, zoom)}:d={frames}:s={config.VIDEO_W}x{config.VIDEO_H}:fps={config.FPS},"
         f"format=yuv420p"
     )
     _run(FF + ["-loop", "1", "-framerate", str(config.FPS), "-i", str(image), "-vf", vf,
@@ -57,12 +59,78 @@ def image_to_clip(image: Path, duration: float, camera: str, out: Path) -> Path:
     return out
 
 
+SMOOTH_MODE = os.getenv("SMOOTH_MODE", "mci")      # mci = optical-flow interpolation, blend = cheaper
+MAX_STRETCH = float(os.getenv("MAX_STRETCH", "1.6"))   # beyond this, slow motion starts to look syrupy
+INVISIBLE_STRETCH = 1.12                               # up to here plain retiming is imperceptible
+
+
+def _duration(p: Path) -> float:
+    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                 str(p)], capture_output=True, text=True, check=True).stdout.strip())
+
+
 def fit_clip(clip: Path, duration: float, out: Path) -> Path:
-    """Scale a Veo clip to project size; hold the last frame if the narration runs longer."""
-    vf = (f"scale={config.VIDEO_W}:{config.VIDEO_H}:force_original_aspect_ratio=increase,"
-          f"crop={config.VIDEO_W}:{config.VIDEO_H},fps={config.FPS},"
-          f"tpad=stop_mode=clone:stop_duration=30,trim=duration={duration:.3f},setpts=PTS-STARTPTS,format=yuv420p")
-    _run(FF + ["-i", str(clip), "-an", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(out)])
+    """Fit an AI video clip (Veo: 8 s) to the time its line needs — WITHOUT freezing.
+
+    Holding the last frame (the old behaviour) makes the picture stop dead and restart at the
+    next scene, which reads as a glitch. Instead we time-remap, like an editor would:
+      * slightly too long  → speed up (≤ 1.25×) so the clip still ends on its final frame, which
+                             is the first frame of the next scene (chained keyframes);
+      * much too long      → trim;
+      * a little too short → slow down ≤ 1.12× (plain retiming is invisible at that amount);
+      * too short          → slow down up to 1.6× with motion-interpolated in-between frames;
+      * even longer        → after 1.6×, keep moving: a gentle camera push on the last frame
+                             continues seamlessly from where the clip ended. Never a frozen frame.
+    """
+    w, h, fps = config.VIDEO_W, config.VIDEO_H, config.FPS
+    fit = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1"
+    src = _duration(clip)
+    f = duration / src
+    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", str(fps)]
+    # trim + a tiny pad only absorb rounding (a few frames) — it sits inside the cross-fade to the next
+    # scene, so it is never visible as a hold
+    # frames are renumbered at a constant rate before trimming, so every scene is EXACTLY round(d×fps) frames
+    # long — otherwise a frame or two lost per scene would add up and pull the audio out of sync
+    n_frames = max(1, round(duration * fps))
+    tail = f"tpad=stop_mode=clone:stop_duration=0.3,fps={fps},setpts=N/{fps}/TB,trim=end_frame={n_frames}"
+    if f < 0.8:
+        vf = f"{fit},setpts=PTS-STARTPTS,fps={fps},setpts=N/{fps}/TB,trim=end_frame={n_frames}"
+    elif f <= INVISIBLE_STRETCH:
+        vf = f"{fit},setpts=(PTS-STARTPTS)*{f:.5f},fps={fps},{tail}"
+    else:
+        stretch = min(f, MAX_STRETCH)
+        interp = (f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+                  if SMOOTH_MODE == "mci" else f"minterpolate=fps={fps}:mi_mode=blend")
+        if f <= MAX_STRETCH:
+            vf = f"{fit},setpts=(PTS-STARTPTS)*{stretch:.5f},{interp},{tail}"
+        else:
+            slowed = out.with_name(out.stem + "_slow.mp4")
+            _run(FF + ["-i", str(clip), "-an", "-vf", f"{fit},setpts=(PTS-STARTPTS)*{stretch:.5f},{interp}", *enc, str(slowed)])
+            last = out.with_name(out.stem + "_last.png")
+            _run(FF + ["-sseof", "-0.2", "-i", str(slowed), "-frames:v", "1", "-update", "1", str(last)])
+            rest = duration - _duration(slowed)
+            push = image_to_clip(last, max(rest, 2 / fps), "slow zoom in", out.with_name(out.stem + "_push.mp4"), zoom=0.06)
+            _run(FF + ["-i", str(slowed), "-i", str(push), "-filter_complex",
+                       f"[0:v]setsar=1[a];[1:v]setsar=1[b];[a][b]concat=n=2:v=1[c];[c]fps={fps},{tail}[v]", "-map", "[v]", *enc, str(out)])
+            for t in (slowed, last, push):
+                t.unlink(missing_ok=True)
+            return out
+    _run(FF + ["-i", str(clip), "-an", "-vf", vf, *enc, str(out)])
+    return out
+
+
+def freezes(video: Path, min_seconds: float = 0.5) -> list[dict]:
+    """Quality check: moments where the picture doesn't change for ≥ min_seconds (looks 'hung').
+    Calibrated so our slow camera moves don't count as frozen."""
+    log = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(video), "-map", "0:v", "-vf",
+                          f"freezedetect=n=-60dB:d={min_seconds}", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    starts = [float(x) for x in re.findall(r"freeze_start: ([\d.]+)", log)]
+    durs = [float(x) for x in re.findall(r"freeze_duration: ([\d.]+)", log)]
+    out = []
+    for i, st in enumerate(starts):
+        d = durs[i] if i < len(durs) else None   # no duration logged = frozen until the very end
+        out.append({"start": round(st, 2), "seconds": round(d, 2) if d is not None else None})
     return out
 
 
@@ -159,6 +227,71 @@ def make_vertical(src: Path, out: Path, duration: float) -> Path:
     _run(FF + ["-i", str(src), "-t", f"{duration:.3f}", "-filter_complex", vf, "-map", "[v]", "-map", "[au]",
                "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-r", str(config.FPS),
                "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", str(out)])
+    return out
+
+
+def bookend(main: Path, intro: Path | None, outro: Path | None, out: Path, music_seed: str) -> float:
+    """intro + main + outro as one video. Clips are fitted to the main video's size/fps (letterboxed
+    on white if their shape differs), the intro jingle is levelled to the song, and a silent outro
+    gets a soft 4-second music tail. Returns the intro length (captions shift by this much)."""
+    from .music import synth_lullaby
+    w, h = (int(x) for x in subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+         str(main)], capture_output=True, text=True, check=True).stdout.strip().split(",")[:2])
+
+    def has_audio(p: Path) -> bool:
+        return bool(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                                    "-of", "csv=p=0", str(p)], capture_output=True, text=True).stdout.strip())
+
+    def dur(p: Path) -> float:
+        return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                     str(p)], capture_output=True, text=True, check=True).stdout.strip())
+
+    parts = [p for p in (intro, main, outro) if p is not None]
+    inputs: list[str] = []
+    chains, labels = [], []
+    vfit = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=white,"
+            f"fps={config.FPS},setsar=1,format=yuv420p")
+    afit = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    for i, p in enumerate(parts):
+        inputs += ["-i", str(p)]
+    extra = len(parts)
+    for i, p in enumerate(parts):
+        chains.append(f"[{i}:v]{vfit}[v{i}]")
+        d = dur(p)
+        if has_audio(p):
+            level = ",loudnorm=I=-18:TP=-2:LRA=11,aresample=48000" if p is not main else ""
+            chains.append(f"[{i}:a]{afit}{level},apad,atrim=duration={d:.3f}[a{i}]")
+        else:  # silent clip (the outro): soft music tail instead of dead air
+            tail = out.parent / f"_tail_{i}.wav"
+            synth_lullaby(max(2.0, d), f"{music_seed}-tail", tail)
+            inputs += ["-i", str(tail)]
+            chains.append(f"[{extra}:a]{afit},volume=-6dB,afade=t=in:d=0.4,"
+                          f"afade=t=out:st={max(0, d - 1.2):.3f}:d=1.2,atrim=duration={d:.3f}[a{i}]")
+            extra += 1
+        labels.append(f"[v{i}][a{i}]")
+    chains.append("".join(labels) + f"concat=n={len(parts)}:v=1:a=1[v][a]")
+    _run(FF + inputs + ["-filter_complex", ";".join(chains), "-map", "[v]", "-map", "[a]",
+                        "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-c:a", "aac", "-b:a", "160k",
+                        "-ar", "48000", "-movflags", "+faststart", str(out)])
+    for t in out.parent.glob("_tail_*.wav"):
+        t.unlink()
+    return dur(intro) if intro is not None else 0.0
+
+
+def shift_srt(src: Path, offset: float, out: Path) -> Path:
+    """Captions for the full (intro + rhyme + outro) video: every cue moves later by `offset`."""
+    import re
+
+    def fmt(t: float) -> str:
+        h, r = divmod(t, 3600)
+        m, s = divmod(r, 60)
+        return f"{int(h):02}:{int(m):02}:{int(s):02},{int(round((s % 1) * 1000)) % 1000:03}"
+
+    def shift(mt):
+        h, m, s, ms = (int(x) for x in mt.groups())
+        return fmt(h * 3600 + m * 60 + s + ms / 1000 + offset)
+    out.write_text(re.sub(r"(\d+):(\d+):(\d+),(\d+)", shift, src.read_text(encoding="utf-8")), encoding="utf-8")
     return out
 
 

@@ -55,7 +55,7 @@ a{color:#1f6fd1}
 <a href="#s4">4 · Meta developer app</a>
 <a href="#s5">5 · Coolify settings</a>
 <a href="#s6">6 · Connect Facebook &amp; Instagram</a>
-<a href="#s6b">6½ · Logo watermark</a>
+<a href="#s6b">6½ · Logo, intro &amp; outro</a>
 <a href="#s7">7 · Publishing a video</a>
 <a href="#s8">8 · Growing the channel</a>
 <a href="#s9">9 · Troubleshooting</a>
@@ -259,13 +259,20 @@ SHORT_MAX_SECONDS=175</pre></li>
 </section>
 
 <section id="s6b">
-<h2>6½ · Logo watermark on every video <span class="time">2 min</span></h2>
+<h2>6½ · Logo, intro &amp; outro on every video <span class="time">2 min</span></h2>
 <ol>
 <li>Studio: <span class="path">📡 Publishing accounts</span>, then scroll to <span class="path">🎨 Logo watermark</span>, then <span class="path">⬆ Upload logo</span>, and pick your Sunave Kids logo (PNG, JPG or WebP; a white background is fine).</li>
 <li>The studio removes the white background, including the insides of letters like a, e and d, keeps white outlines such as the one around "Kids", trims the edges and adds a soft shadow. Check the preview on the checkered background.</li>
 <li>When asked <i>"Apply it to all existing videos now too?"</i>, click <span class="path">OK</span>. Every finished video is re-rendered with the logo. This costs nothing in AI usage and takes about 1–2 minutes per video.</li>
 </ol>
 <p>The logo sits at the very bottom-right, about 17% of the video width and slightly transparent, so it brands the video without distracting little ones. On-screen lyrics move up just above it. Shorts and Reels inherit it. Videos already posted to YouTube, Facebook or Instagram keep their old version, so publish them again if you want the logo there too.</p>
+<h3>Intro &amp; outro</h3>
+<p>The Sunave Kids intro (5 s, logo with jingle) and outro (4 s, "Thanks for Watching! Subscribe / Like") are built in and added automatically around every <b>full</b> video: YouTube, Facebook and downloads. YouTube captions are shifted so the lyrics still line up. <b>Shorts and Reels skip them</b> and start straight with the rhyme, because the first second decides whether people keep watching.</p>
+<ul>
+<li>Per video: untick <span class="path">🎬 Add Sunave Kids intro &amp; outro</span> when creating it.</li>
+<li>Replace or turn off: <span class="path">📡 Publishing accounts</span>, then <span class="path">🎬 Intro &amp; outro</span>, then <span class="path">⬆ Replace</span>, <span class="path">Turn off</span> or <span class="path">Use default</span>. Keep clips under 30 seconds, ideally 3–6.</li>
+<li>Afterwards, click <span class="path">✨ Apply logo, intro &amp; outro to all existing videos</span> to update videos you've already made.</li>
+</ul>
 <div class="note">To change the position or size, set <code>LOGO_POSITION</code> (<code>right</code>, <code>left</code> or <code>center</code>) and <code>LOGO_WIDTH_PCT</code> (e.g. <code>0.15</code>) in Coolify, redeploy, then click <span class="path">✨ Apply logo to all existing videos</span>.</div>
 </section>
 

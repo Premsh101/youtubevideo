@@ -38,7 +38,7 @@ video{width:100%;border-radius:12px;background:#000}
 </style>
 </head>
 <body>
-<header><span style="font-size:30px">🧸</span><div><h1>Toddler Rhyme Studio</h1><small>Gemini on Vertex AI · 2-min rhymes · English + हिंदी · cost in ₹</small></div>
+<header><span style="font-size:30px">🧸</span><div><h1>Toddler Rhyme Studio</h1><small>Gemini on Vertex AI · 2-min rhymes · separate English &amp; हिंदी videos · cost in ₹</small></div>
 <div style="margin-left:auto" id="ytstatus"></div></header>
 <main>
 <section>
@@ -53,14 +53,14 @@ video{width:100%;border-radius:12px;background:#000}
   <div class="seg" id="mode"><button data-v="2d" class="on">🎨 2D cartoon</button><button data-v="3d">🧊 3D rendered</button></div>
   <label>Motion engine</label>
   <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
-  <label>Languages</label>
+  <label>Output videos (one separate MP4 per language, same visuals)</label>
   <div class="row"><label style="margin:0"><input type="checkbox" id="langEn" checked> English</label><label style="margin:0"><input type="checkbox" id="langHi" checked> हिंदी</label></div>
   <label>Target length: <span id="lenLbl">120</span> s</label>
   <input type="range" id="len" min="60" max="180" step="10" value="120" style="width:100%">
 
-  <h2 style="margin-top:18px">3 · Characters <span class="badge" id="charCount"></span></h2>
+  <h2 style="margin-top:18px">3 · Characters <span class="badge" id="charCount">Gemini casts automatically</span></h2>
+  <div class="est" style="margin:0 0 8px">Gemini picks characters to fit the rhyme — reusing ones already in the library and inventing new ones only when needed. Optionally tap to pin favourites.</div>
   <div class="chars" id="chars"></div>
-  <div class="row" style="margin-top:8px"><input type="text" id="brief" placeholder="New character brief, e.g. a shy purple turtle" style="flex:1"><button class="small" id="addChar">+ Design</button></div>
 
   <div class="est" id="est"></div>
   <button class="primary" id="go">✨ Create video</button>
@@ -95,17 +95,13 @@ function params(){const languages=[];if($('#langEn').checked)languages.push('en'
 async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
  $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
 
-async function loadChars(){const cs=await api('/api/characters');if(!selected.size)cs.slice(0,2).forEach(c=>selected.add(c.id));
- $('#chars').innerHTML=cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}</div>`).join('');
- document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');$('#charCount').textContent=selected.size+' selected'});
- $('#charCount').textContent=selected.size+' selected'}
+async function loadChars(){const cs=await api('/api/characters');
+ $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}</div>`).join(''):'<i class="est">Library is empty — Gemini will create the first characters with your first video.</i>';
+ document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');cnt()});cnt()}
+function cnt(){$('#charCount').textContent=selected.size?selected.size+' pinned':'Gemini casts automatically'}
 
-$('#addChar').onclick=async()=>{const brief=$('#brief').value.trim();if(!brief)return alert('Describe the character first');$('#addChar').disabled=true;$('#addChar').textContent='Designing…';
- try{const r=await api('/api/characters',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({brief,mode,generate_sheet:true})});selected.add(r.character.id);$('#brief').value='';await loadChars();alert(`Created ${r.character.name}. Reference sheet cost ${inr(r.cost.total_inr)} — reused for free in every video.`)}
- catch(e){alert(e.message)}finally{$('#addChar').disabled=false;$('#addChar').textContent='+ Design'}};
 
-$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language');if(!selected.size)return alert('Pick at least one character');
- if(!confirm(`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
+$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language'); if(!confirm(`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
  $('#go').disabled=true;const j=await api('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(p)});watch(j.id)};
 
 function watch(id){current=id;$('#progressCard').style.display='';$('#resultCard').style.display='none';clearInterval(poll);poll=setInterval(tick,1500);tick()}
@@ -122,6 +118,7 @@ function render(j){const c=$('#resultCard');c.style.display='';if(j.status==='er
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
   ${o.youtube?`<a class="small" style="text-decoration:none" href="${o.youtube.url}" target="_blank">▶ On YouTube (${o.youtube.privacy})</a>`:`<button class="small" onclick="publish('${j.id}','${lang}',this)">📤 Post to YouTube</button>`}</div></div>`).join('');
  c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span></h2>
+  <div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>
   <div class="out">${outs}</div>
   <div class="kf">${(j.keyframes||[]).map(k=>`<img src="/api/jobs/${j.id}/files/${k}">`).join('')}</div>
   <h3>Lyrics</h3><div class="lyrics">${(s.scenes||[]).map(x=>`<div>${x.line_en}<br><span style="color:#777">${x.line_hi||''}</span></div>`).join('')}</div>

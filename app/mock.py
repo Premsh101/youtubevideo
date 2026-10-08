@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import colorsys
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,7 +34,15 @@ _RHYME_HI = [
 
 
 def mock_json(prompt: str) -> dict:
-    if '"reference_sheet_prompt"' in prompt or "character designer" in prompt.lower():
+    if '"use_existing"' in prompt:
+        existing = re.findall(r"id=([a-z0-9-]+):", prompt)
+        if existing:
+            return {"use_existing": existing[:1], "new_characters": []}
+        return {"use_existing": [], "new_characters": [{
+            "name": "Tara", "species": "little star", "personality": "bright and giggly",
+            "colours": ["sunshine yellow", "soft purple"], "signature_item": "tiny blue mittens",
+            "reference_sheet_prompt": "A chubby smiling yellow star with rosy cheeks and tiny blue mittens, front and side view, white background"}]}
+    if '"reference_sheet_prompt"' in prompt:
         return {
             "name": "Bunny",
             "species": "bunny",

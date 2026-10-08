@@ -59,12 +59,18 @@ class Job:
         mode = p.get("mode", "2d")
         engine = p.get("engine", "images")
         langs = p.get("languages") or ["en", "hi"]
-        char_ids = p.get("characters") or [c["id"] for c in characters.list_characters()[:2]]
-        chars = [characters.get(c) for c in char_ids]
-
-        # 1. character sheets (paid once per character, reused forever)
-        self.step("Preparing character reference sheets", 0.03)
-        sheets = [characters.ensure_sheet(c["id"], mode, self.ledger) for c in chars]
+        # 1. casting: Gemini reuses library characters that fit, invents new ones only if needed.
+        #    Sheets are generated once per character and reused forever.
+        if p.get("characters"):
+            self.step("Preparing pinned characters", 0.03)
+            chars = [characters.get(c) for c in p["characters"]]
+            for c in chars:
+                characters.ensure_sheet(c["id"], mode, self.ledger)
+        else:
+            self.step("Gemini is casting the characters", 0.03)
+            chars = characters.cast_with_gemini(p.get("topic"), p.get("poem"), mode, self.ledger)
+        self.state["cast"] = [{"id": c["id"], "name": c["name"], "species": c["species"]} for c in chars]
+        sheets = [characters.sheet_path(c["id"]) for c in chars]
 
         # 2. poem + scene plan (EN + HI in one call)
         self.step("Writing the rhyme and scene plan with Gemini", 0.08)

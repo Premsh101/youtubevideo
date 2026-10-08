@@ -16,8 +16,6 @@ app = FastAPI(title="Toddler Rhyme Studio")
 STATIC = Path(__file__).parent / "static"
 _jobs: dict[str, pipeline.Job] = {}
 
-characters.ensure_seeded()
-
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
@@ -40,43 +38,12 @@ def get_config() -> dict:
 
 
 # ----------------------------------------------------------------- characters
-class CharacterIn(BaseModel):
-    name: str | None = None
-    species: str | None = None
-    personality: str | None = None
-    colours: list[str] | None = None
-    signature_item: str | None = None
-    brief: str | None = Field(None, description="If given, Gemini designs the character from this brief")
-    mode: Literal["2d", "3d"] = "2d"
-    generate_sheet: bool = True
-
-
 @app.get("/api/characters")
 def api_characters() -> list[dict]:
     out = characters.list_characters()
     for c in out:
         c["sheet_url"] = f"/api/characters/{c['id']}/sheet.png" if c["has_sheet"] else None
     return out
-
-
-@app.post("/api/characters")
-def api_create_character(body: CharacterIn) -> dict:
-    ledger = CostLedger()
-    if body.brief:
-        c = characters.design_with_gemini(body.brief, ledger)
-    else:
-        if not (body.name and body.species):
-            raise HTTPException(400, "name and species are required (or give a brief)")
-        c = characters.save({
-            "name": body.name, "species": body.species,
-            "personality": body.personality or "happy and friendly",
-            "colours": body.colours or ["sunshine yellow", "sky blue"],
-            "signature_item": body.signature_item or "a little red bow",
-        })
-    if body.generate_sheet:
-        characters.ensure_sheet(c["id"], body.mode, ledger)
-    c["has_sheet"] = characters.sheet_path(c["id"]) is not None
-    return {"character": c, "cost": ledger.summary()}
 
 
 @app.post("/api/characters/{cid}/sheet")
@@ -109,7 +76,7 @@ class JobIn(BaseModel):
     mode: Literal["2d", "3d"]
     engine: Literal["images", "veo"] = "images"
     languages: list[Literal["en", "hi"]] = ["en", "hi"]
-    characters: list[str] = []
+    characters: list[str] = Field([], description="Optional: pin library characters; empty = Gemini casts")
     topic: str | None = None
     poem: str | None = None
     target_seconds: int = Field(config.TARGET_SECONDS, ge=30, le=240)

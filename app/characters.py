@@ -1,5 +1,7 @@
 """Reusable character library.
 
+Gemini casts each video: it reuses characters already in the library when they
+fit the poem and invents new ones only when needed; new ones are saved here.
 A character = JSON profile + a generated reference sheet (front/side view).  The
 sheet is paid for once and then passed as a reference image to every scene
 render, which is what keeps the character identical across videos and scenes.
@@ -15,17 +17,6 @@ from pathlib import Path
 from . import config, toddler
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_json
-
-SEED_CHARACTERS = [
-    {"id": "bunny-pip", "name": "Pip", "species": "bunny", "personality": "gentle and curious",
-     "colours": ["candy pink", "cream white"], "signature_item": "a tiny yellow scarf"},
-    {"id": "elephant-ellie", "name": "Ellie", "species": "baby elephant", "personality": "kind and giggly",
-     "colours": ["sky blue", "soft purple"], "signature_item": "a red balloon tied to her trunk"},
-    {"id": "duck-dodo", "name": "Dodo", "species": "duckling", "personality": "silly and brave",
-     "colours": ["sunshine yellow", "orange pop"], "signature_item": "little green rain boots"},
-    {"id": "cat-mimi", "name": "Mimi", "species": "kitten", "personality": "sleepy and sweet",
-     "colours": ["orange pop", "cream white"], "signature_item": "a star-shaped bell collar"},
-]
 
 
 def _slug(name: str) -> str:
@@ -78,25 +69,6 @@ def delete(cid: str) -> None:
     shutil.rmtree(_path(cid), ignore_errors=True)
 
 
-def ensure_seeded() -> None:
-    if not any(config.CHARACTER_DIR.iterdir()):
-        for c in SEED_CHARACTERS:
-            save(dict(c))
-
-
-def design_with_gemini(brief: str, ledger: CostLedger) -> dict:
-    """Let Gemini invent a toddler-friendly character from a short brief."""
-    prompt = f"""You are a character designer for a preschool (age 1-3) nursery-rhyme YouTube channel.
-Design ONE friendly animal character from this brief: "{brief}".
-Rules: cute, round, non-scary, big eyes, 2 main bright colours from this palette: {', '.join(k.replace('_',' ') for k in toddler.PALETTE)}.
-Return JSON with keys: name (short, easy for toddlers to say), species, personality (3 words),
-colours (list of 2), signature_item (one small wearable item), reference_sheet_prompt (one paragraph
-describing the character for an image model, front view and side view on plain white background)."""
-    data = generate_json(prompt, ledger, "character design")
-    data.pop("id", None)
-    return save(data)
-
-
 def ensure_sheet(cid: str, mode: str, ledger: CostLedger) -> Path:
     """Generate (once) the reference sheet used for every later render."""
     existing = sheet_path(cid)
@@ -117,3 +89,43 @@ def ensure_sheet(cid: str, mode: str, ledger: CostLedger) -> Path:
     c["mode"] = mode
     save(c)
     return dest
+
+
+def cast_with_gemini(topic: str | None, poem: str | None, mode: str, ledger: CostLedger,
+                     max_chars: int = 2) -> list[dict]:
+    """Ask Gemini which characters the rhyme needs: reuse from the library if they fit,
+    otherwise design new ones (saved for future videos)."""
+    library = list_characters()
+    lib_text = "\n".join(f"- id={c['id']}: {describe(c)}" for c in library) or "(library is empty)"
+    subject = f'the user\'s poem:\n"""\n{poem}\n"""' if poem else f'the topic "{topic or "a happy day with friends"}"'
+    prompt = f"""You are the casting director and character designer for a preschool (age 1-3)
+nursery-rhyme YouTube channel. The next video is about {subject}.
+
+Existing reusable characters:
+{lib_text}
+
+Pick at most {max_chars} characters in total. PREFER reusing existing characters when they fit the
+rhyme (reuse saves money and toddlers love familiar faces). Only invent a new character when the
+rhyme clearly needs one (e.g. the poem is about a cow and we have no cow).
+New characters: cute, round, non-scary animals or friendly objects, big eyes, 2 main bright colours
+from: {', '.join(k.replace('_', ' ') for k in toddler.PALETTE)}.
+
+Return JSON:
+{{"use_existing": [ids from the library],
+  "new_characters": [{{"name": short name toddlers can say, "species": str, "personality": "3 words",
+    "colours": [2 colours], "signature_item": "one small wearable item",
+    "reference_sheet_prompt": "one paragraph describing the character for an image model"}}]}}"""
+    data = generate_json(prompt, ledger, "casting")
+    known = {c["id"] for c in library}
+    cast = [get(cid) for cid in data.get("use_existing", []) if cid in known]
+    for nc in data.get("new_characters", []):
+        if len(cast) >= max_chars:
+            break
+        nc.pop("id", None)
+        cast.append(save(nc))
+    if not cast:  # safety net: Gemini returned nothing usable
+        cast = library[:1] or [save({"name": "Pip", "species": "bunny", "personality": "gentle and curious",
+                                     "colours": ["candy pink", "cream white"], "signature_item": "a tiny yellow scarf"})]
+    for c in cast:
+        ensure_sheet(c["id"], mode, ledger)
+    return cast

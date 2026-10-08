@@ -1,12 +1,14 @@
 # 🧸 Toddler Rhyme Studio
 
 Automated 2-minute nursery-rhyme / poem videos for toddlers (1–3 yrs), generated with
-**Gemini on Vertex AI**, rendered in **English and Hindi from the same visuals**, with a
-per-video cost readout in ₹ and one-click **YouTube** publishing.
+**Gemini on Vertex AI**. Each run produces **two separate downloadable videos — one English, one
+Hindi** — that share the same visuals (rendered once), plus a per-video cost readout in ₹ and
+one-click **YouTube** publishing for each.
 
 ```
-Topic or your own poem ──► Gemini (script: EN+HI lyric per scene, visuals, camera)
-Reusable characters   ──► reference sheet (made once) ─┐
+Topic or your own poem ──► Gemini casts characters (reuse library / invent new, saved for later)
+                       ──► Gemini script: EN + HI lyric per scene, visuals, camera
+Character sheets (made once per character) ────────────┐
                                                        ▼
                      Gemini Flash Image keyframes (ref sheets + previous frame = consistency)
                                                        │
@@ -16,7 +18,7 @@ Reusable characters   ──► reference sheet (made once) ─┐
                                                        ▼
           Cloud TTS (en-IN / hi-IN, slow + warm) + procedural lullaby, ducked under the voice
                                                        ▼
-                 final_en.mp4 · final_hi.mp4 · captions · thumbnail · cost in ₹ · ▶ YouTube
+                 final_en.mp4 (English)  ·  final_hi.mp4 (Hindi)  ·  captions · thumbnail · cost in ₹ · ▶ YouTube each
 ```
 
 ## Quick start
@@ -47,11 +49,14 @@ hummed voice so you can see the flow (costs are shown as *estimates*, nothing is
 1. **Content** – let Gemini write an original rhyme on a topic, or paste your own poem
    (EN or HI); Gemini splits it into scenes and produces the other language.
 2. **Look & feel** – pick **2D cartoon** or **3D rendered**, the motion engine, languages, length.
-3. **Characters** – tick existing characters or type a brief ("a shy purple turtle") and Gemini
-   designs one. Its reference sheet is generated **once** and reused in every scene of every
-   future video — that is what keeps the character identical across videos.
-4. **Create video** – live progress + running spend. Result shows both language players,
-   lyrics, keyframes, download buttons, a cost table and *Post to YouTube*.
+3. **Characters** – nothing to set up. Gemini casts the video from the poem/topic: it reuses
+   characters already in the library when they fit and invents a new one only when the rhyme
+   needs it. New characters are saved to the library with a reference sheet generated **once**
+   and reused in every scene of every future video — that is what keeps a character identical
+   across videos. You may optionally pin favourites.
+4. **Create video** – live progress + running spend. Result shows the English video and the
+   Hindi video side by side, each with ⬇ Download MP4, ⬇ Captions and 📤 Post to YouTube, plus
+   lyrics, keyframes and the cost table.
 
 ## Keeping cost low (and what a video costs)
 | Item | Default model | Approx. per 2-min video (EN+HI) |

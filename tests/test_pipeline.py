@@ -26,20 +26,10 @@ def test_estimate_and_scene_count():
     assert veo["total_usd"] > est["total_usd"]
 
 
-def test_characters_seeded_and_sheet():
-    cs = client.get("/api/characters").json()
-    assert len(cs) >= 4
-    r = client.post(f"/api/characters/{cs[0]['id']}/sheet?mode=2d").json()
-    assert r["sheet_url"].endswith("sheet.png")
-    # second call is a cache hit → free
-    r2 = client.post(f"/api/characters/{cs[0]['id']}/sheet?mode=2d").json()
-    assert r2["cost"]["total_usd"] == 0
-
-
-def test_full_job_both_languages():
-    cs = client.get("/api/characters").json()
+def test_full_job_both_languages_with_auto_casting():
+    assert client.get("/api/characters").json() == []  # nothing pre-made
     body = {"mode": "2d", "engine": "images", "languages": ["en", "hi"],
-            "characters": [cs[0]["id"], cs[1]["id"]], "topic": "stars", "target_seconds": 60}
+            "topic": "stars", "target_seconds": 60}
     job = client.post("/api/jobs", json=body).json()
     for _ in range(240):
         j = client.get(f"/api/jobs/{job['id']}").json()
@@ -50,6 +40,11 @@ def test_full_job_both_languages():
     assert set(j["outputs"]) == {"en", "hi"}
     assert j["cost"]["total_inr"] >= 0
     assert j["script"]["scenes"][0]["line_hi"]
+    assert j["cast"] and j["cast"][0]["name"] == "Tara"       # Gemini invented a character…
+    lib = client.get("/api/characters").json()
+    assert len(lib) == 1 and lib[0]["has_sheet"]              # …and it was saved for reuse
+    r = client.post(f"/api/characters/{lib[0]['id']}/sheet?mode=2d").json()
+    assert r["cost"]["total_usd"] == 0                        # sheet is cached → free next time
     d = config.OUTPUT_DIR / job["id"]
     for lang in ("en", "hi"):
         out = d / j["outputs"][lang]["video"]

@@ -14,7 +14,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from . import config
+from . import branding, config
 
 # language → (font family, right-to-left?)
 FONTS = {
@@ -52,8 +52,8 @@ def parse_srt(path: Path) -> list[tuple[float, float, str]]:
     return out
 
 
-def build_ass(cues: list[tuple[float, float, str]], lang: str, out: Path) -> Path:
-    w, h = config.VIDEO_W, config.VIDEO_H
+def build_ass(cues: list[tuple[float, float, str]], lang: str, out: Path, w: int | None = None, h: int | None = None) -> Path:
+    w, h = w or config.VIDEO_W, h or config.VIDEO_H
     size = round(h * 0.085)
     font = FONTS.get(lang, DEFAULT_FONT)
     header = f"""[Script Info]
@@ -65,7 +65,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Lyric,{font},{size},{FILL_SUNG},{FILL_BEFORE},&H00FF8F3A,&H64000000,1,0,0,0,100,100,0,0,1,{round(size * 0.13)},{round(size * 0.06)},2,{round(w * 0.06)},{round(w * 0.06)},{round(h * 0.05)},1
+Style: Lyric,{font},{size},{FILL_SUNG},{FILL_BEFORE},&H00FF8F3A,&H64000000,1,0,0,0,100,100,0,0,1,{round(size * 0.13)},{round(size * 0.06)},2,{round(w * 0.06)},{round(w * 0.06)},{branding.lyrics_bottom_margin(w, h)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -98,13 +98,35 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return out
 
 
-def burn(video: Path, captions: Path, lang: str, out: Path) -> Path:
-    """Re-encode the video with the animated lyrics drawn on; audio is copied untouched."""
-    ass = build_ass(parse_srt(captions), lang, video.parent / f"lyrics_{lang}.ass")
-    fonts = Path(config.FONTS_DIR)
-    vf = f"ass={ass.name}" + (f":fontsdir={fonts.resolve()}" if fonts.exists() else "")
-    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", video.name, "-vf", vf,
-                    "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
+def _size(video: Path) -> tuple[int, int]:
+    o = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                        "-of", "csv=p=0", str(video)], capture_output=True, text=True, check=True).stdout
+    w, h = o.strip().split(",")[:2]
+    return int(w), int(h)
+
+
+def finalize(video: Path, captions: Path | None, lang: str, logo: Path | None, out: Path) -> Path:
+    """The final look in one re-encode: animated lyrics (if captions given) + logo watermark (if given).
+    Audio is copied untouched."""
+    w, h = _size(video)
+    chain, inputs, label = [], ["-i", video.name], "0:v"
+    if captions is not None:
+        ass = build_ass(parse_srt(captions), lang, video.parent / f"lyrics_{lang}.ass", w, h)
+        fonts = Path(config.FONTS_DIR)
+        chain.append(f"[0:v]ass={ass.name}" + (f":fontsdir={fonts.resolve()}" if fonts.exists() else "") + "[ly]")
+        label = "ly"
+    if logo is not None:
+        inputs += ["-loop", "1", "-i", str(logo.resolve())]
+        chain.append(branding.overlay_filter(w, h, label, "1:v", "lo"))
+        label = "lo"
+    chain.append(f"[{label}]format=yuv420p[vout]")
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
+                    "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", "0:a?", "-shortest",
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "19",
                     "-c:a", "copy", "-movflags", "+faststart", out.name],
                    check=True, cwd=video.parent)
     return out
+
+
+def burn(video: Path, captions: Path, lang: str, out: Path) -> Path:
+    return finalize(video, captions, lang, None, out)

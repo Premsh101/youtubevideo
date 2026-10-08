@@ -39,7 +39,8 @@ video{width:100%;border-radius:12px;background:#000}
 </head>
 <body>
 <header><span style="font-size:30px">🧸</span><div><h1>Toddler Rhyme Studio</h1><small>Gemini on Vertex AI · 2-min rhymes · separate English &amp; हिंदी videos · cost in ₹</small></div>
-<div style="margin-left:auto" id="ytstatus"></div></header>
+<div style="margin-left:auto;display:flex;gap:8px;align-items:center"><span id="ytstatus"></span><button class="small" onclick="toggleAccounts()">📡 Publishing accounts</button><a class="small" style="text-decoration:none;color:inherit" href="/guide" target="_blank">📘 Setup guide</a></div></header>
+<div id="accounts" class="card" style="display:none;max-width:1100px;margin:16px auto 0"></div>
 <main>
 <section>
  <div class="card">
@@ -125,7 +126,7 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
   <details><summary style="cursor:pointer;font-size:13px">Technical details</summary><div class="err">${j.error||''}</div></details>`;return}
  const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)',sung:'Sung song (ElevenLabs)'};
  const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':k==='sung'?'min':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
- const esc=t=>String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+ 
  const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${LNAME(lang)} <span class="badge">${o.duration}s</span> ${o.sync==='plan'?'<span class="badge" style="background:#ffe3e3" title="Could not measure where the song lines are; pictures follow the plan and may drift. Give the ElevenLabs key Forced Alignment access.">⚠ timing estimated</span>':o.sync?'<span class="badge" style="background:#dff5df" title="Pictures are cut to where each line is actually heard">✓ synced</span>':''}</h3>
   <video controls preload="metadata" src="/api/jobs/${j.id}/files/${o.video}" poster="/api/jobs/${j.id}/files/${o.thumbnail}"></video>
   <div style="font-size:13px;margin:6px 0"><b>${esc(o.title)}</b> <button class="small" style="padding:1px 6px" onclick="copyTxt(this,${esc(JSON.stringify(o.title||''))})">📋</button>
@@ -138,7 +139,7 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
    </details></div>
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
   <button class="small" onclick="setLyrics('${j.id}','${lang}',${o.lyrics_on_screen?'false':'true'})">${o.lyrics_on_screen?'🚫 Remove on-screen lyrics':'🔤 Add on-screen lyrics'}</button>
-  ${o.youtube?`<a class="small" style="text-decoration:none" href="${o.youtube.url}" target="_blank">▶ On YouTube (${o.youtube.privacy})</a>`:`<button class="small" onclick="publish('${j.id}','${lang}',this)">📤 Post to YouTube</button>`}</div></div>`).join('');
+</div>${pubBox(j,lang,o)}</div>`).join('');
  c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
   <div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>
   <div class="out">${outs}</div>
@@ -155,9 +156,56 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
   <div class="est" style="margin:4px 0 0">Pictures are reused — you only pay for the new voice/song (and lyrics if that language doesn't exist yet). Files stay on the server until you delete them.</div>
   <h3>Cost of this video</h3><div class="cost"><table>${rows}</table><div class="total">Total: ${inr(cost.total_inr_all_attempts||cost.total_inr||0)} <small style="font-size:12px;color:#777;font-weight:400">($${(cost.total_usd||0).toFixed(3)} @ ₹${cost.usd_to_inr}/$ ${cfg.mock?'· MOCK mode, nothing billed':''})</small></div></div>`}
 
-async function publish(id,lang,btn){if(!cfg.youtube.authorised){if(confirm('Connect your YouTube channel first?'))location.href='/youtube/auth';return}
- const privacy=prompt('Privacy: private / unlisted / public',cfg.youtube.privacy||'private');if(!privacy)return;btn.disabled=true;btn.textContent='Uploading…';
- try{const r=await api(`/api/jobs/${id}/youtube/${lang}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({privacy})});alert('Uploaded: '+r.url);render(await api('/api/jobs/'+id))}catch(e){alert(e.message);btn.disabled=false;btn.textContent='📤 Post to YouTube'}}
+function esc(t){return String(t??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
+const PLAT={youtube:['▶','YouTube video'],youtube_short:['📱','YouTube Short'],facebook:['📘','Facebook Page'],instagram:['📸','Instagram Reel']};
+let SOC={youtube:{channels:{}},meta:{}};
+function pubBox(j,lang,o){const pub=o.published||{};if(o.youtube&&!pub.youtube)pub.youtube={status:'done',...o.youtube};
+ const ytOk=!!(SOC.youtube.channels[lang]||SOC.youtube.channels.default),mOk=!!SOC.meta.connected,igOk=!!SOC.meta.instagram;
+ const avail={youtube:ytOk,youtube_short:ytOk,facebook:mOk,instagram:igOk};
+ const row=t=>{const p=pub[t]||{},[ic,nm]=PLAT[t];const st=p.status==='done'?`<a href="${p.url}" target="_blank">✓ posted${p.privacy?' ('+p.privacy+')':''}</a>`:p.status==='uploading'?'⏳ uploading…':p.status==='queued'?'⏳ queued':p.status==='error'?`<span style="color:#c00" title="${esc(p.error)}">✗ failed — hover for reason</span>`:(avail[t]?'':'<span class="est" style="margin:0">not connected</span>');
+  return `<label style="display:flex;gap:6px;align-items:center;margin:3px 0;color:var(--ink);font-size:13px"><input type="checkbox" class="pt-${j.id}-${lang}" value="${t}" ${avail[t]&&p.status!=='done'?'checked':''} ${avail[t]?'':'disabled'}> ${ic} ${nm} <span style="margin-left:auto">${st}</span></label>`};
+ return `<div style="margin-top:8px;padding:8px 10px;border:1px dashed #cfe3f7;border-radius:10px">
+  <b style="font-size:13px">🚀 Publish ${LNAME(lang)}</b>${Object.keys(PLAT).map(row).join('')}
+  <div class="row" style="margin-top:4px"><select id="pv-${j.id}-${lang}" style="width:auto;font-size:13px"><option value="private">YouTube: private</option><option value="unlisted">unlisted</option><option value="public">public</option></select>
+  <input type="datetime-local" id="pa-${j.id}-${lang}" title="Optional: schedule the YouTube video to go public at this time" style="width:auto;font-size:13px;padding:6px">
+  <button class="small" onclick="publishNow('${j.id}','${lang}',this)">🚀 Publish selected</button></div>
+  <div class="est" style="margin:4px 0 0">Shorts &amp; Reels get an automatic 9:16 version (Reels ≤ ${Math.round(cfg.reel_max||90)} s, cut after a complete scene). Facebook/Instagram posts include the YouTube link when YouTube goes first.</div></div>`}
+async function publishNow(id,lang,btn){const targets=[...document.querySelectorAll(`.pt-${id}-${lang}:checked`)].map(x=>x.value);if(!targets.length)return alert('Tick at least one platform (connect accounts via 📡 Publishing accounts)');
+ const privacy=$(`#pv-${id}-${lang}`).value,when=$(`#pa-${id}-${lang}`).value;let publish_at=null;
+ if(when){const d=new Date(when);if(d<=new Date())return alert('Pick a future time');publish_at=d.toISOString()}
+ if(!confirm(`Publish ${LNAME(lang)} to: ${targets.map(t=>PLAT[t][1]).join(', ')}?${publish_at?'\nYouTube goes public at '+new Date(publish_at).toLocaleString():targets.some(t=>t.startsWith('youtube'))?'\nYouTube privacy: '+privacy:''}${targets.some(t=>t==='facebook'||t==='instagram')?'\nFacebook/Instagram posts are public immediately.':''}`))return;
+ btn.disabled=true;try{await api(`/api/jobs/${id}/publish/${lang}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({targets,privacy,publish_at})});pollPub(id)}catch(e){alert(e.message);btn.disabled=false}}
+function pollPub(id){const t=setInterval(async()=>{const j=await api('/api/jobs/'+id);render(j);const busy=Object.values(j.outputs||{}).some(o=>Object.values(o.published||{}).some(p=>['queued','uploading'].includes(p.status)));if(!busy){clearInterval(t);loadJobs()}},3000)}
+function toggleAccounts(){const a=$('#accounts');a.style.display=a.style.display==='none'?'':'none';if(a.style.display==='')loadAccounts()}
+async function loadAccounts(){SOC=await api('/api/social/status');const a=$('#accounts');const ch=SOC.youtube.channels,m=SOC.meta;
+ const ytRows=Object.entries(ch).map(([slot,c])=>`<div class="row" style="margin:4px 0">▶ <b>${esc(c.title||'channel')}</b> <span class="badge">${slot==='default'?'all languages':'only '+LNAME(slot)}</span><button class="small" onclick="disc('youtube/${slot}')">Disconnect</button></div>`).join('')||'<div class="est">No channel connected yet.</div>';
+ a.innerHTML=`<h2>📡 Publishing accounts</h2>
+ <div class="out"><div><h3 style="margin:4px 0">YouTube</h3>${SOC.youtube.configured?'':'<div class="err">YouTube OAuth client JSON missing on the server (guide step 2.4).</div>'}${ytRows}
+  <div class="row" style="margin-top:6px"><a class="small" style="text-decoration:none;color:inherit" href="/youtube/auth">➕ Connect main channel</a>
+  <select id="ytSlot" style="width:auto">${LANGS.map(l=>`<option value="${l.code}">${l.name}</option>`).join('')}</select><button class="small" onclick="location.href='/youtube/auth?slot='+$('#ytSlot').value">➕ Connect a channel for this language</button></div>
+  <div class="est">Language channels are optional: a Hindi video goes to the Hindi channel if connected, otherwise to the main channel.</div></div>
+ <div><h3 style="margin:4px 0">Facebook Page &amp; Instagram</h3>${m.configured?'':'<div class="err">META_APP_ID / META_APP_SECRET not set (guide step 5).</div>'}
+  ${m.connected?`<div>📘 Page: <b>${esc(m.page.name)}</b></div><div>📸 Instagram: ${m.instagram?'<b>@'+esc(m.instagram.username||m.instagram.id)+'</b>':'<span style="color:#c00">not linked to this Page (guide step 3.3)</span>'}</div>
+   ${m.pages.length>1?`<div class="row" style="margin-top:4px"><select id="pgSel" style="width:auto">${m.pages.map(p=>`<option value="${p.id}" ${p.id===m.page.id?'selected':''}>${esc(p.name)}${p.instagram?' + @'+esc(p.instagram.username||''):''}</option>`).join('')}</select><button class="small" onclick="selPage()">Use this Page</button></div>`:''}
+   <div class="row" style="margin-top:6px"><a class="small" style="text-decoration:none;color:inherit" href="/meta/auth">🔄 Reconnect</a><button class="small" onclick="disc('meta')">Disconnect</button></div>`
+  :`<a class="small" style="text-decoration:none;color:inherit" href="/meta/auth">➕ Connect Facebook &amp; Instagram</a>`}
+  ${SOC.public_base_url?`<div class="est">Public address: ${esc(SOC.public_base_url)}</div>`:'<div class="err">PUBLIC_BASE_URL is not set — Facebook/Instagram need it to download videos (guide step 6).</div>'}</div></div>
+ <h3 style="margin:14px 0 4px">🎨 Logo watermark</h3><div id="brandBox" class="est">loading…</div>`;loadBranding()}
+async function loadBranding(){const b=await api('/api/branding');const box=$('#brandBox');
+ box.innerHTML=`${b.logo?`<div style="background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/16px 16px;border-radius:10px;padding:8px;display:inline-block"><img src="${b.logo_url}?t=${Date.now()}" style="max-height:70px;max-width:100%"></div><br>`:'No logo yet. '}
+  <div class="row" style="margin-top:6px"><label class="small" style="cursor:pointer;margin:0">${b.logo?'🔁 Replace logo':'⬆ Upload logo'}<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="uploadLogo(this)"></label>
+  ${b.logo?`<button class="small" onclick="applyLogoAll()">✨ Apply logo to all existing videos</button><button class="small" onclick="delLogo()">Remove logo</button>`:''}</div>
+  <div style="margin-top:4px">Placed at the very bottom (${esc(b.position)}) of every new video, small and slightly transparent; lyrics sit just above it. White background is removed automatically. Shorts &amp; Reels inherit it.</div><div id="brandProg"></div>`}
+async function uploadLogo(inp){const f=inp.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);
+ try{const r=await fetch('/api/branding/logo',{method:'POST',body:fd});if(!r.ok)throw new Error(await r.text());await loadBranding();
+  if(confirm('Logo saved — new videos will carry it. Apply it to all existing videos now too? (ffmpeg only, no AI cost; a minute or two per video)'))applyLogoAll(true)}catch(e){alert(e.message)}}
+async function delLogo(){if(!confirm('Remove the logo? New videos will have no watermark. (Use “Apply to all” afterwards to strip it from existing videos.)'))return;await api('/api/branding/logo',{method:'DELETE'});loadBranding()}
+async function applyLogoAll(skip){if(!skip&&!confirm('Re-render every existing video with the current logo? No AI cost. If a video is already on YouTube/Facebook/Instagram, publish it again to update it there.'))return;
+ try{const r=await api('/api/branding/apply-all',{method:'POST'});const t=setInterval(async()=>{const s=await api('/api/branding/apply-all');$('#brandProg').textContent=s.running?`Applying… ${s.done}/${s.total} videos`:`✓ Done — ${s.done} video(s) updated`;if(!s.running){clearInterval(t);loadJobs()}},2000)}catch(e){alert(e.message)}}
+async function disc(path){if(!confirm('Disconnect this account from the app? (Nothing is deleted on the platform.)'))return;await api('/api/social/'+path,{method:'DELETE'});loadAccounts();headerStatus()}
+async function selPage(){SOC.meta=await api('/api/social/meta/page/'+$('#pgSel').value,{method:'POST'});loadAccounts();headerStatus()}
+async function headerStatus(){try{SOC=await api('/api/social/status')}catch(e){}const n=Object.keys(SOC.youtube.channels).length;
+ $('#ytstatus').innerHTML=`<span class="badge">${n?'▶ ✓':'▶ ✗'}</span> <span class="badge">${SOC.meta.connected?'📘 ✓':'📘 ✗'}</span> <span class="badge">${SOC.meta.instagram?'📸 ✓':'📸 ✗'}</span>`+(cfg.mock?' <span class="badge" style="background:var(--yellow)">MOCK_AI</span>':'')}
 
 let lastJob=null;
 function langCost(){const j=lastJob,sel=$('#addLang');if(!j||!sel||!sel.value)return;const lang=sel.value,sc=(j.script||{}).scenes||[];
@@ -175,9 +223,9 @@ async function del_(id){if(!confirm('Delete this video and its files from the se
 async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${(j.languages||[]).map(l=>`<span class="badge">${l}</span>`).join(' ')} ${j.cost?inr(j.cost.total_inr_all_attempts||j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''} <button class="small" style="float:right;padding:2px 8px" title="Delete video" onclick="del_('${j.id}')">🗑</button></div>`).join(''):'<i>None yet</i>'}
 async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued'||j.status==='waiting')watch(id);else render(j)}
 
-(async()=>{cfg=await api('/api/config');$('#ytstatus').innerHTML=cfg.youtube.authorised?'<span class="badge">YouTube ✓ connected</span>':cfg.youtube.configured?'<a class="small" style="text-decoration:none;color:inherit" href="/youtube/auth">Connect YouTube</a>':'<span class="badge" title="Add data/secrets/youtube_client_secret.json">YouTube not configured</span>';
+(async()=>{cfg=await api('/api/config');
  if(!cfg.elevenlabs){const b=document.querySelector('#vocals button[data-v=sung]');b.disabled=true;b.title='Set ELEVENLABS_API_KEY on the server';b.style.opacity=.5}
- if(cfg.mock)$('#ytstatus').innerHTML+=' <span class="badge" style="background:var(--yellow)">MOCK_AI</span>';
+ await headerStatus();if(/connected=/.test(location.search)){toggleAccounts();history.replaceState(null,'','/')}
  LANGS=await api('/api/languages');$('#langs').innerHTML=LANGS.map(l=>`<label style="margin:0;font-size:13px;color:var(--ink);white-space:nowrap"><input type="checkbox" value="${l.code}" ${['en','hi'].includes(l.code)?'checked':''}> ${l.name}${l.native!==l.name?' · '+l.native:''}</label>`).join('');
  document.querySelectorAll('#langs input').forEach(x=>x.onchange=estimate);
  const ps=await api('/api/presets');$('#preset').innerHTML=ps.map(p=>`<option value="${p.id}">${p.lang==='hi'?'🇮🇳':'🇬🇧'} ${p.title}</option>`).join('');

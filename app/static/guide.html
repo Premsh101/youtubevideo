@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sunave Kids Setup Guide</title>
+<style>
+:root{--bg:#fff8e7;--card:#fff;--ink:#2b2b2b;--muted:#666;--line:#efe4c8;--yellow:#ffd93d;--blue:#6bcbff;--pink:#ffa3d7;--red:#ff6b6b;--green:#8be78b;--code:#f6f1e3;--warn:#fff1d6;--warnline:#ffcf70;--note:#eaf7ff;--noteline:#9fd6f7}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#1d1b17;--card:#26231e;--ink:#f1ece2;--muted:#b9b1a2;--line:#3a352c;--code:#302b23;--warn:#3a2f17;--warnline:#8a6a20;--note:#16303d;--noteline:#2c6684}}
+:root[data-theme="dark"]{--bg:#1d1b17;--card:#26231e;--ink:#f1ece2;--muted:#b9b1a2;--line:#3a352c;--code:#302b23;--warn:#3a2f17;--warnline:#8a6a20;--note:#16303d;--noteline:#2c6684}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:linear-gradient(90deg,var(--yellow),var(--pink),var(--blue));color:#2b2b2b;padding:22px 16px}
+header .in{max-width:980px;margin:0 auto}
+header h1{margin:0;font-size:26px}header p{margin:4px 0 0}
+main{max-width:980px;margin:0 auto;padding:16px;display:grid;grid-template-columns:minmax(0,1fr);gap:16px}main>*{min-width:0}
+@media(min-width:960px){main{grid-template-columns:230px minmax(0,1fr)}nav{position:sticky;top:12px;align-self:start}}
+nav{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:14px}
+nav b{display:block;margin-bottom:6px}nav a{display:block;color:inherit;text-decoration:none;padding:3px 0}nav a:hover{text-decoration:underline}
+section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:16px}
+h2{margin:0 0 6px;font-size:21px}h3{margin:18px 0 6px;font-size:17px}
+.time{display:inline-block;font-size:12px;background:var(--code);border-radius:999px;padding:1px 10px;margin-left:6px;vertical-align:middle;color:var(--muted)}
+ol{padding-left:22px}li{margin:6px 0}
+.path{background:var(--code);border-radius:6px;padding:1px 6px;font-weight:600;white-space:normal}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13.5px}
+code{background:var(--code);padding:1px 5px;border-radius:5px;word-break:break-all}
+pre{background:var(--code);padding:12px;border-radius:10px;overflow-x:auto;position:relative;margin:8px 0}
+.copy{position:absolute;top:6px;right:6px;font-size:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:2px 8px;cursor:pointer}
+.note,.warn{border-radius:10px;padding:10px 12px;margin:10px 0;font-size:15px}
+.note{background:var(--note);border-left:4px solid var(--noteline)}
+.warn{background:var(--warn);border-left:4px solid var(--warnline)}
+table{width:100%;border-collapse:collapse;font-size:14.5px;margin:8px 0}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:13px;color:var(--muted)}
+.tbl{overflow-x:auto}
+.check{list-style:none;padding-left:0}.check li::before{content:"☐ ";font-weight:700}
+.chip{display:inline-block;background:var(--code);border-radius:999px;padding:1px 10px;margin:2px 4px 2px 0;font-size:13.5px}
+a{color:#1f6fd1}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) a{color:#7fc2ff}}
+</style>
+</head>
+<body>
+<header><div class="in">
+<h1>🧸 Sunave Kids: setup guide</h1>
+<p>Create the YouTube channel, Facebook Page and Instagram account, connect them to the studio, and publish from one button.</p>
+</div></header>
+
+<main>
+<nav>
+<b>Steps</b>
+<a href="#s0">0 · Before you start</a>
+<a href="#s1">1 · YouTube channel</a>
+<a href="#s2">2 · Connect YouTube to the studio</a>
+<a href="#s3">3 · Facebook Page &amp; Instagram</a>
+<a href="#s4">4 · Meta developer app</a>
+<a href="#s5">5 · Coolify settings</a>
+<a href="#s6">6 · Connect Facebook &amp; Instagram</a>
+<a href="#s6b">6½ · Logo watermark</a>
+<a href="#s7">7 · Publishing a video</a>
+<a href="#s8">8 · Growing the channel</a>
+<a href="#s9">9 · Troubleshooting</a>
+</nav>
+
+<div>
+<section id="s0">
+<h2>0 · Before you start <span class="time">10 min</span></h2>
+<p>Your app address in these steps is <code class="dom">https://YOUR-DOMAIN</code>. (When you open this page from the studio, the real address is filled in for you.)</p>
+<h3>What you need</h3>
+<ul class="check">
+<li>A Google account that will own the channel. A dedicated one, e.g. <code>sunavekids@gmail.com</code>, is best.</li>
+<li>A personal Facebook account. Meta requires a person to own a Page, but the Page will show only "Sunave Kids".</li>
+<li>A phone number for YouTube verification and the Meta developer account.</li>
+<li>A logo, square, at least 800 × 800 px, plus a YouTube banner (2560 × 1440) and a Facebook cover (1640 × 624). Canva has free kids-channel templates.</li>
+</ul>
+<h3>Names to use everywhere (keep them identical)</h3>
+<div class="tbl"><table>
+<tr><th>Platform</th><th>Name</th><th>Handle / username</th></tr>
+<tr><td>YouTube, main channel</td><td>Sunave Kids</td><td>@SunaveKids</td></tr>
+<tr><td>YouTube, Hindi channel (optional, recommended)</td><td>Sunave Kids Hindi</td><td>@SunaveKidsHindi</td></tr>
+<tr><td>Facebook Page</td><td>Sunave Kids</td><td>facebook.com/SunaveKids</td></tr>
+<tr><td>Instagram</td><td>Sunave Kids</td><td>@sunavekids</td></tr>
+</table></div>
+<div class="note"><b>One channel or one per language?</b> YouTube recommends videos better when a channel sticks to one language, so the big kids' brands run a channel per language. The studio supports both: connect a Hindi channel and Hindi videos go there automatically, while everything else goes to the main channel. If you'd rather start simple, use one channel and add the Hindi channel later.</div>
+</section>
+
+<section id="s1">
+<h2>1 · Create the YouTube channel <span class="time">20 min</span></h2>
+<h3>1.1 Create the channel (as a Brand channel)</h3>
+<ol>
+<li>Go to <a href="https://www.youtube.com" target="_blank">youtube.com</a> and sign in with the Google account from step 0.</li>
+<li>Click your avatar (top right), then <span class="path">Settings</span>, then <span class="path">Add or manage your channel(s)</span>, then <span class="path">Create a channel</span>.</li>
+<li>Name: <b>Sunave Kids</b>. Tick the agreement and click <span class="path">Create</span>.<br><small>A Brand channel can have managers and lets one Google account own several channels (main + Hindi).</small></li>
+</ol>
+<h3>1.2 Mark the channel "Made for kids" (required)</h3>
+<ol>
+<li>Open <a href="https://studio.youtube.com" target="_blank">studio.youtube.com</a>, then <span class="path">Settings</span> (bottom left), then <span class="path">Channel</span>, then <span class="path">Advanced settings</span>.</li>
+<li>Under <i>Audience</i>, choose <span class="path">Yes, set this channel as made for kids</span>, then <span class="path">Save</span>.</li>
+</ol>
+<div class="warn">This is mandatory for toddler content under COPPA and FTC rules, and getting it wrong can lead to fines. Comments, the notification bell, mini-player and personalised ads are switched off on kids' videos; that's normal for every kids' channel. The studio also marks every upload "made for kids".</div>
+<h3>1.3 Profile, handle and branding</h3>
+<ol>
+<li>In Studio: <span class="path">Customization</span>, then <span class="path">Profile</span> (called <i>Basic info</i> on some accounts).
+ <ul>
+ <li><b>Handle:</b> <code>@SunaveKids</code></li>
+ <li><b>Description</b> (paste and edit):
+ <pre><button class="copy">Copy</button>Welcome to Sunave Kids! 🌈 Happy nursery rhymes and baby songs in Hindi and English for toddlers aged 1–3. Sing along with our friendly animal friends, and learn colours, numbers, animals and good habits.
+
+New rhymes every week. Subscribe and sing along! 🎵
+
+हिंदी बालगीत और नर्सरी राइम्स, छोटे बच्चों के लिए।</pre></li>
+ <li><b>Links:</b> add your Instagram and Facebook Page once they exist (step 3).</li>
+ <li><b>Contact email</b> for brands and partnerships.</li>
+ </ul></li>
+<li><span class="path">Customization</span>, then <span class="path">Branding</span>: profile picture (logo, 800 × 800), banner (2560 × 1440, keep text inside the centre 1546 × 423 area), and a video watermark (150 × 150 "Subscribe" bubble). Click <span class="path">Publish</span>.</li>
+</ol>
+<h3>1.4 Verify the channel</h3>
+<ol><li>Open <a href="https://www.youtube.com/verify" target="_blank">youtube.com/verify</a> and verify by SMS. This unlocks <b>custom thumbnails</b>, which the studio uploads automatically, and videos over 15 minutes.</li></ol>
+<h3>1.5 Defaults, country and keywords</h3>
+<ol>
+<li>Studio: <span class="path">Settings</span>, then <span class="path">Channel</span>, then <span class="path">Basic info</span>. Country: <b>India</b>. Keywords:
+<pre><button class="copy">Copy</button>Sunave Kids, nursery rhymes, kids songs, baby songs, toddler songs, hindi rhymes, balgeet, hindi nursery rhymes, bachon ke gaane, learning songs</pre></li>
+<li><span class="path">Settings</span>, then <span class="path">Upload defaults</span>: category <b>Education</b>, video language <b>Hindi</b> or <b>English</b> to match the channel. Click <span class="path">Save</span>.</li>
+</ol>
+<h3>1.6 Playlists (manual, once)</h3>
+<p>Studio: <span class="path">Content</span>, then <span class="path">Playlists</span>, then <span class="path">New playlist</span>. Start with: <span class="chip">Hindi Rhymes | हिंदी बालगीत</span><span class="chip">English Nursery Rhymes</span><span class="chip">Bedtime Lullabies</span><span class="chip">Learning Songs (colours, numbers, animals)</span>. Add new videos to them after they're published. Playlists greatly increase watch time.</p>
+<h3>1.7 Hindi channel (optional)</h3>
+<p>Repeat 1.1 to 1.5 with the name <b>Sunave Kids Hindi</b> and handle <b>@SunaveKidsHindi</b>.</p>
+</section>
+
+<section id="s2">
+<h2>2 · Connect YouTube to the studio <span class="time">15 min</span></h2>
+<p>Do this in the <b>same Google Cloud project</b> you use for Gemini/Vertex. If you already did part C of DEPLOY.md, check 2.2 especially.</p>
+<h3>2.1 Enable the API</h3>
+<ol><li><a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank">Google Cloud console: YouTube Data API v3</a>, then <span class="path">Enable</span>.</li></ol>
+<h3>2.2 Consent screen: set to "In production"</h3>
+<ol>
+<li>Console: <span class="path">APIs &amp; Services</span>, then <span class="path">OAuth consent screen</span> (on new consoles this is <span class="path">Google Auth Platform</span>).</li>
+<li><b>Branding:</b> app name <code>Sunave Kids Studio</code>, support email = yours. <b>Audience:</b> <i>External</i>.</li>
+<li>Under <span class="path">Audience</span>, click <span class="path">Publish app</span>, then <span class="path">Confirm</span>, so the status shows <b>In production</b>.</li>
+</ol>
+<div class="warn">If the app stays in <i>Testing</i>, Google expires the login after <b>7 days</b> and uploads start failing weekly. "In production" without verification is fine for your own use. You'll see a "Google hasn't verified this app" screen when connecting, which is expected.</div>
+<h3>2.3 OAuth client</h3>
+<ol>
+<li><span class="path">APIs &amp; Services</span>, then <span class="path">Credentials</span>, then <span class="path">+ Create credentials</span>, then <span class="path">OAuth client ID</span>.</li>
+<li>Application type <b>Web application</b>, name <code>studio</code>.</li>
+<li><span class="path">Authorised redirect URIs</span>, then <span class="path">+ Add URI</span>:
+<pre><button class="copy">Copy</button><span class="dom">https://YOUR-DOMAIN</span>/youtube/oauth2callback</pre></li>
+<li><span class="path">Create</span>, then <span class="path">Download JSON</span>.</li>
+</ol>
+<h3>2.4 Give the JSON to the studio</h3>
+<ol><li>Coolify: your resource, then <span class="path">Storages</span>, then <span class="path">+ Add</span>, then <span class="path">File mount</span>. Destination <code>/srv/data/secrets/youtube_client_secret.json</code>, content = the downloaded JSON. Click <span class="path">Save</span>, then <span class="path">Redeploy</span>.</li></ol>
+<h3>2.5 Connect the channel(s)</h3>
+<ol>
+<li>Open the studio and click <span class="path">📡 Publishing accounts</span> (top right), then <span class="path">➕ Connect main channel</span>.</li>
+<li>Pick the Google account. On the channel chooser pick <b>Sunave Kids</b>, not your personal channel.</li>
+<li>"Google hasn't verified this app": click <span class="path">Advanced</span>, then <span class="path">Go to Sunave Kids Studio</span>. Tick both permissions and click <span class="path">Continue</span>.</li>
+<li>You're returned to the studio and the panel shows ▶ <b>Sunave Kids</b>, <i>all languages</i>.</li>
+<li>Hindi channel: in the same panel choose <b>Hindi</b> in the dropdown, click <span class="path">➕ Connect a channel for this language</span>, and pick <b>Sunave Kids Hindi</b>.</li>
+</ol>
+<div class="note"><b>Daily limit:</b> YouTube gives every project 10,000 API units per day. One upload uses about 1,600 units, plus 400 for captions and 50 for the thumbnail, so you get roughly <b>5 uploads a day</b> (Shorts count as uploads). That's plenty for a steady schedule. For more, apply via YouTube's API quota extension form.</div>
+</section>
+
+<section id="s3">
+<h2>3 · Facebook Page &amp; Instagram <span class="time">20 min</span></h2>
+<h3>3.1 Facebook Page</h3>
+<ol>
+<li>On <a href="https://www.facebook.com/pages/create" target="_blank">facebook.com/pages/create</a>, logged in with your personal account:
+ <ul><li><b>Page name:</b> Sunave Kids</li>
+ <li><b>Category:</b> type and pick <i>Video Creator</i> and <i>Education</i></li>
+ <li><b>Bio:</b> "Happy nursery rhymes &amp; baby songs in Hindi and English for little ones 🌈 New rhymes every week!"</li></ul>
+ Then click <span class="path">Create Page</span>.</li>
+<li>Add the profile picture (logo) and cover photo (1640 × 624), then <span class="path">Next</span>. Skip WhatsApp and inviting friends, then <span class="path">Done</span>.</li>
+<li>Optional: Page <span class="path">Settings</span>, then <span class="path">Username</span>: <code>SunaveKids</code>.</li>
+</ol>
+<h3>3.2 Instagram: professional account</h3>
+<ol>
+<li>In the Instagram app, create the account <b>@sunavekids</b> (Profile, then your username at the top, then <span class="path">Add account</span>, then <span class="path">Create new account</span>).</li>
+<li>Profile, then <span class="path">☰</span>, then <span class="path">Settings and activity</span>, then <span class="path">Account type and tools</span>, then <span class="path">Switch to professional account</span>.</li>
+<li>Category: <i>Video Creator</i> (or <i>Education</i>). Choose <b>Business</b>, then <span class="path">Done</span>.<br><small>Automatic Reel posting through the API works with Professional accounts; Business is the safest choice.</small></li>
+<li>Edit profile: name <b>Sunave Kids</b>, the logo, the bio, and add your YouTube channel link.</li>
+</ol>
+<h3>3.3 Link Instagram to the Facebook Page (required for automation)</h3>
+<ol>
+<li>On Facebook, switch to the Page: avatar, then <span class="path">See all profiles</span>, then <b>Sunave Kids</b>.</li>
+<li><span class="path">Settings &amp; privacy</span>, then <span class="path">Settings</span>, then <span class="path">Linked accounts</span>, then <span class="path">Instagram</span>, then <span class="path">Connect account</span>.</li>
+<li>Log in as @sunavekids and allow access.</li>
+</ol>
+<p><small>Alternative: <a href="https://business.facebook.com" target="_blank">Meta Business Suite</a>, then <span class="path">Settings</span>, then <span class="path">Business assets</span>, then <span class="path">Instagram accounts</span>, then <span class="path">Connect</span>.</small></p>
+<h3>3.4 Business portfolio (recommended)</h3>
+<ol><li><a href="https://business.facebook.com" target="_blank">business.facebook.com</a>: <span class="path">Create a business portfolio</span> named <b>Sunave Kids</b>. Then <span class="path">Settings</span>, then <span class="path">Accounts</span>, then <span class="path">Pages</span> and <span class="path">Instagram accounts</span>, and add both. This makes the developer app setup in step 4 smoother and lets you add helpers later without sharing passwords.</li></ol>
+<div class="note">Instagram and Facebook require users to be 13 or older, so write posts for <b>parents</b> ("Sing along with your little one!"). The studio's Facebook and Instagram text already does this.</div>
+</section>
+
+<section id="s4">
+<h2>4 · Meta developer app <span class="time">20 min</span></h2>
+<p>This is what lets the studio post for you. It stays in <b>Development mode</b>: you're its admin and post only to your own Page and Instagram, so <b>no App Review is needed</b>.</p>
+<h3>4.1 Developer account</h3>
+<ol><li><a href="https://developers.facebook.com" target="_blank">developers.facebook.com</a>, then <span class="path">Get started</span> (log in with the Facebook account that owns the Page). Verify your phone and accept the terms.</li></ol>
+<h3>4.2 Create the app</h3>
+<ol>
+<li><span class="path">My Apps</span>, then <span class="path">Create app</span>.</li>
+<li>App name <code>Sunave Kids Studio</code>, contact email = yours, then <span class="path">Next</span>.</li>
+<li>Use case: <span class="path">Other</span>, then <span class="path">Next</span>. App type <b>Business</b>, then <span class="path">Next</span>.</li>
+<li>Business portfolio: <b>Sunave Kids</b> (from 3.4), then <span class="path">Create app</span> and confirm your password.</li>
+</ol>
+<div class="note">Meta redesigns this wizard often. If you only see use cases, pick <b>"Manage everything on your Page"</b> and add <b>"Manage messaging &amp; content on Instagram"</b> (choose <i>API setup with Facebook login</i>). The end result is the same.</div>
+<h3>4.3 Add the products</h3>
+<ol>
+<li>App dashboard: <span class="path">Add product</span>, then <b>Facebook Login for Business</b>, then <span class="path">Set up</span>.</li>
+<li>Its <span class="path">Settings</span>: <i>Client OAuth login</i> = Yes, <i>Web OAuth login</i> = Yes, <i>Enforce HTTPS</i> = Yes. <i>Valid OAuth Redirect URIs</i>:
+<pre><button class="copy">Copy</button><span class="dom">https://YOUR-DOMAIN</span>/meta/oauth2callback</pre>Then <span class="path">Save changes</span>.</li>
+<li><span class="path">Add product</span>, then <b>Instagram</b>, then <span class="path">Set up</span>, and choose <i>API setup with Facebook login</i> if asked.</li>
+</ol>
+<h3>4.4 Login configuration (permissions)</h3>
+<ol>
+<li><span class="path">Facebook Login for Business</span>, then <span class="path">Configurations</span>, then <span class="path">+ Create configuration</span>.</li>
+<li>Name <code>Publishing</code>. Login variation <b>General</b>. Access token <b>User access token</b>.</li>
+<li>Assets: <b>Pages</b> and <b>Instagram accounts</b>. Permissions, tick exactly:<br>
+<span class="chip">pages_show_list</span><span class="chip">pages_read_engagement</span><span class="chip">pages_manage_posts</span><span class="chip">business_management</span><span class="chip">instagram_basic</span><span class="chip">instagram_content_publish</span></li>
+<li><span class="path">Create</span>, then copy the <b>Configuration ID</b>. This is <code>META_LOGIN_CONFIG_ID</code>.</li>
+</ol>
+<p><small>If your app shows classic <i>Facebook Login</i> instead (no Configurations menu), skip 4.4 and leave <code>META_LOGIN_CONFIG_ID</code> empty. The studio then asks for those permissions directly.</small></p>
+<h3>4.5 App ID and secret</h3>
+<ol>
+<li><span class="path">App settings</span>, then <span class="path">Basic</span>. Copy the <b>App ID</b> and, after <span class="path">Show</span>, the <b>App secret</b>.</li>
+<li>Privacy policy URL: Meta asks for one. Any page with your privacy text works, e.g. a Google Doc shared publicly. Click <span class="path">Save changes</span>.</li>
+<li>Leave the top toggle at <b>Development</b>. Don't switch to Live.</li>
+</ol>
+<div class="warn">Keep the App secret private, like a password. Put it only in Coolify (step 5), never in chats or screenshots.</div>
+</section>
+
+<section id="s5">
+<h2>5 · Coolify settings <span class="time">5 min</span></h2>
+<ol>
+<li>Coolify: your resource, then <span class="path">Environment Variables</span>, then <span class="path">Developer view</span>. Add or adjust:
+<pre><button class="copy">Copy</button>CHANNEL_NAME=Sunave Kids
+PUBLIC_BASE_URL=<span class="dom">https://YOUR-DOMAIN</span>
+YOUTUBE_REDIRECT_URI=<span class="dom">https://YOUR-DOMAIN</span>/youtube/oauth2callback
+META_APP_ID=paste-app-id
+META_APP_SECRET=paste-app-secret
+META_LOGIN_CONFIG_ID=paste-configuration-id
+YOUTUBE_PRIVACY=private
+REEL_MAX_SECONDS=90
+SHORT_MAX_SECONDS=175</pre></li>
+<li><span class="path">Save</span>, then <span class="path">Redeploy</span>. Wait for <b>Running</b>.</li>
+</ol>
+<p><code>PUBLIC_BASE_URL</code> matters because Facebook and Instagram download the video from your server. The studio gives them a signed link that expires after 3 days, so nothing else is exposed.</p>
+</section>
+
+<section id="s6">
+<h2>6 · Connect Facebook &amp; Instagram <span class="time">3 min</span></h2>
+<ol>
+<li>Studio: <span class="path">📡 Publishing accounts</span>, then <span class="path">➕ Connect Facebook &amp; Instagram</span>.</li>
+<li>Meta dialog: <span class="path">Continue as …</span>. When asked which business, pick <b>Sunave Kids</b>.</li>
+<li><b>Pages:</b> tick <b>Sunave Kids</b>. <b>Instagram accounts:</b> tick <b>@sunavekids</b>. Then <span class="path">Continue</span> and <span class="path">Save</span>.</li>
+<li>Back in the studio the panel shows 📘 Page: <b>Sunave Kids</b> and 📸 Instagram: <b>@sunavekids</b>, and the header badges turn ✓.</li>
+</ol>
+<div class="note">The login doesn't expire: the studio swaps it for a long-lived Page token. If you change your Facebook password or remove the app, click <span class="path">🔄 Reconnect</span>.</div>
+</section>
+
+<section id="s6b">
+<h2>6½ · Logo watermark on every video <span class="time">2 min</span></h2>
+<ol>
+<li>Studio: <span class="path">📡 Publishing accounts</span>, then scroll to <span class="path">🎨 Logo watermark</span>, then <span class="path">⬆ Upload logo</span>, and pick your Sunave Kids logo (PNG, JPG or WebP; a white background is fine).</li>
+<li>The studio removes the white background, including the insides of letters like a, e and d, keeps white outlines such as the one around "Kids", trims the edges and adds a soft shadow. Check the preview on the checkered background.</li>
+<li>When asked <i>"Apply it to all existing videos now too?"</i>, click <span class="path">OK</span>. Every finished video is re-rendered with the logo. This costs nothing in AI usage and takes about 1–2 minutes per video.</li>
+</ol>
+<p>The logo sits at the very bottom-right, about 17% of the video width and slightly transparent, so it brands the video without distracting little ones. On-screen lyrics move up just above it. Shorts and Reels inherit it. Videos already posted to YouTube, Facebook or Instagram keep their old version, so publish them again if you want the logo there too.</p>
+<div class="note">To change the position or size, set <code>LOGO_POSITION</code> (<code>right</code>, <code>left</code> or <code>center</code>) and <code>LOGO_WIDTH_PCT</code> (e.g. <code>0.15</code>) in Coolify, redeploy, then click <span class="path">✨ Apply logo to all existing videos</span>.</div>
+</section>
+
+<section id="s7">
+<h2>7 · Publishing a video <span class="time">1 min per video</span></h2>
+<ol>
+<li>Create a video as usual and watch both language versions in the result card.</li>
+<li>Under each language there's a <b>🚀 Publish</b> box. Tick the platforms:
+ <div class="tbl"><table>
+ <tr><th>Option</th><th>What gets posted</th></tr>
+ <tr><td>▶ YouTube video</td><td>The full 16:9 video with title, description, tags, hashtags, thumbnail and lyrics captions, marked <i>made for kids</i>. Goes to that language's channel if connected.</td></tr>
+ <tr><td>📱 YouTube Short</td><td>A 9:16 version (blurred background, nothing cropped), up to about 3 minutes, linking to the full video.</td></tr>
+ <tr><td>📘 Facebook Page</td><td>The full video posted on the Sunave Kids Page, with the YouTube link.</td></tr>
+ <tr><td>📸 Instagram Reel</td><td>A 9:16 Reel of up to 90 seconds, cut right after a complete scene (never mid-line), with caption, hashtags and cover.</td></tr>
+ </table></div></li>
+<li>Choose the YouTube privacy, and optionally a date and time to <b>schedule</b> YouTube to go public.</li>
+<li>Click <span class="path">🚀 Publish selected</span>. Each row shows ⏳ uploading, then ✓ posted (click to open), or ✗ with the reason. Instagram takes 1–3 minutes to process.</li>
+</ol>
+<div class="warn">Facebook and Instagram posts are <b>public immediately</b>. A safe routine: publish YouTube as <i>private</i>, check it in YouTube Studio, then publish again to Facebook and Instagram (already-posted rows stay ✓ and unticked).</div>
+</section>
+
+<section id="s8">
+<h2>8 · Growing Sunave Kids</h2>
+<ul>
+<li><b>Consistency beats volume.</b> Aim for 3 full videos a week per channel, plus Shorts and Reels cut from them.</li>
+<li><b>Posting times (IST)</b> when parents are on their phones: 7–9 AM, 12–2 PM and 7–9 PM. Weekends work well. Use the schedule box.</li>
+<li><b>Series and playlists:</b> recurring characters (the studio reuses them automatically) and themed playlists keep toddlers watching back to back.</li>
+<li><b>End screens</b> (manual): YouTube Studio, then the video, then <span class="path">Editor</span>, then <span class="path">End screen</span>. Add <i>Subscribe</i> and <i>Best for viewer</i>.</li>
+<li><b>Thumbnails:</b> one big friendly character face and bright colours. The studio's auto thumbnail is a starting point; a custom one often doubles clicks.</li>
+<li><b>Policies that protect reach:</b>
+ <ul>
+ <li>Never use other channels' names (Cocomelon, ChuChu…) in titles or tags. The studio already avoids this.</li>
+ <li>YouTube's <i>inauthentic content</i> rule demonetises mass-produced, repetitive uploads. Vary rhymes, topics and characters, and review every video before it goes public.</li>
+ <li>Cartoon animation doesn't need YouTube's "altered or synthetic content" label; the studio sets it to <i>No</i>.</li>
+ </ul></li>
+<li><b>Monetisation (YouTube Partner Program):</b> 1,000 subscribers plus 4,000 public watch hours in 12 months, or 1,000 subscribers plus 10 million Shorts views in 90 days. Made-for-kids videos earn lower ad rates, so volume and watch time matter.</li>
+</ul>
+</section>
+
+<section id="s9">
+<h2>9 · Troubleshooting</h2>
+<div class="tbl"><table>
+<tr><th>You see</th><th>Fix</th></tr>
+<tr><td>"YouTube OAuth client JSON missing"</td><td>Step 2.4: the file mount path must be exactly <code>/srv/data/secrets/youtube_client_secret.json</code>. Redeploy.</td></tr>
+<tr><td>Google error <code>redirect_uri_mismatch</code></td><td>Step 2.3: the URI must match <code>YOUTUBE_REDIRECT_URI</code> exactly, including https and no trailing slash.</td></tr>
+<tr><td>YouTube uploads fail after a week</td><td>Step 2.2: the consent screen is still in <i>Testing</i>. Publish it, then reconnect.</td></tr>
+<tr><td><code>quotaExceeded</code> from YouTube</td><td>Daily 10,000-unit limit reached (about 5 uploads). It resets at midnight Pacific time; try again later.</td></tr>
+<tr><td>Meta "URL blocked" or "Can't load URL"</td><td>Step 4.3: redirect URI <code>/meta/oauth2callback</code> missing, or <code>PUBLIC_BASE_URL</code> differs from your domain.</td></tr>
+<tr><td>"No Facebook Pages were shared with the app"</td><td>In the Meta dialog tick the Page. Click 🔄 Reconnect and choose <i>Edit access</i>.</td></tr>
+<tr><td>Instagram "not linked to this Page"</td><td>Step 3.2 (must be Professional) and step 3.3 (linked to the Page), then 🔄 Reconnect.</td></tr>
+<tr><td>Instagram ✗ "could not process the video"</td><td>Usually length: lower <code>REEL_MAX_SECONDS</code> (e.g. 60) in Coolify and publish again.</td></tr>
+<tr><td>Facebook or Instagram can't download the video</td><td><code>PUBLIC_BASE_URL</code> must be the public https address and the app must be reachable from the internet.</td></tr>
+</table></div>
+</section>
+</div>
+</main>
+<script>
+(function(){
+  try {
+    var origin = location.protocol.indexOf('http') === 0 ? location.origin : null;
+    if (origin && !/localhost|127\.0\.0\.1/.test(origin)) {
+      document.querySelectorAll('.dom').forEach(function(el){ el.textContent = origin; });
+    }
+  } catch (e) {}
+  document.querySelectorAll('pre .copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var text = btn.parentElement.innerText.replace(/^Copy\s*/, '').replace(/^Copied\s*/, '');
+      navigator.clipboard.writeText(text).then(function(){ btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1200); });
+    });
+  });
+})();
+</script>
+</body>
+</html>

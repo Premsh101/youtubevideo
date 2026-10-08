@@ -100,3 +100,21 @@ YOUTUBE_CLIENT_SECRETS = Path(os.getenv("YOUTUBE_CLIENT_SECRETS", SECRETS_DIR / 
 YOUTUBE_TOKEN = SECRETS_DIR / "youtube_token.json"
 YOUTUBE_REDIRECT = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000/youtube/oauth2callback")
 YOUTUBE_PRIVACY = os.getenv("YOUTUBE_PRIVACY", "private")  # private | unlisted | public
+
+# --- Brand -------------------------------------------------------------------
+CHANNEL_NAME = os.getenv("CHANNEL_NAME", "Sunave Kids")
+
+# --- Public address of this app (Meta downloads videos from here; also used for OAuth redirects) ---
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+
+# --- Facebook Page + Instagram (Meta Graph API) ----------------------------
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+META_LOGIN_CONFIG_ID = os.getenv("META_LOGIN_CONFIG_ID", "")   # Facebook Login for Business configuration (optional)
+META_PAGE_ID = os.getenv("META_PAGE_ID", "")                   # optional: which Page to post to if you manage several
+META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v26.0")
+META_REDIRECT = os.getenv("META_REDIRECT_URI", f"{PUBLIC_BASE_URL or 'http://localhost:8000'}/meta/oauth2callback")
+
+# --- Vertical cuts for Reels / Shorts --------------------------------------
+REEL_MAX_SECONDS = float(os.getenv("REEL_MAX_SECONDS", "90"))     # Instagram Reels via API: keep <= 90 s
+SHORT_MAX_SECONDS = float(os.getenv("SHORT_MAX_SECONDS", "175"))  # YouTube Shorts: up to 3 min

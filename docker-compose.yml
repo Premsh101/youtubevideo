@@ -15,6 +15,13 @@ services:
       - YOUTUBE_PRIVACY=${YOUTUBE_PRIVACY:-private}
       - APP_PASSWORD=${APP_PASSWORD:-}   # optional login, empty = no login
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - CHANNEL_NAME=${CHANNEL_NAME:-Sunave Kids}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+      - META_APP_ID=${META_APP_ID}
+      - META_APP_SECRET=${META_APP_SECRET}
+      - META_LOGIN_CONFIG_ID=${META_LOGIN_CONFIG_ID}
+      - META_PAGE_ID=${META_PAGE_ID}
+      - IMAGE_RPM=${IMAGE_RPM:-5}
       - MOCK_AI=${MOCK_AI:-0}
     volumes:
       - studio_data:/srv/data      # characters, cache, finished videos, YouTube token

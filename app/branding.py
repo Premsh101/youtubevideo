@@ -124,7 +124,7 @@ def overlay_filter(video_w: int, video_h: int, in_label: str, logo_label: str, o
     m = round(video_h * MARGIN_PCT)
     x = {"left": f"{m * 2}", "center": "(W-w)/2"}.get(POSITION, f"W-w-{m * 2}")
     return (f"[{logo_label}]scale={lw}:-1,format=rgba,colorchannelmixer=aa={OPACITY}[lg];"
-            f"[{in_label}][lg]overlay=x={x}:y=H-h-{m}:format=auto[{out_label}]")
+            f"[{in_label}][lg]overlay=x={x}:y=H-h-{m}:format=auto:shortest=1[{out_label}]")
 
 
 def lyrics_bottom_margin(video_w: int, video_h: int) -> int:

@@ -147,7 +147,7 @@ def test_sung_vocals_job():
     truth = [float(x) for x in __import__("json").loads(next((config.CACHE_DIR / "songs").glob("*.truth.json")).read_text())]
     assert tl["sync"] == "mock-measured"
     for i in range(1, len(truth)):
-        assert abs((truth[i] - tl["starts"][i]) - tl["voice_lead"]) < 0.02, (i, truth[i], tl["starts"][i])
+        assert abs((truth[i] - tl["starts"][i]) - tl["voice_lead"]) < 1 / 24 + 1e-6, (i, truth[i], tl["starts"][i])  # within one frame
     assert truth[-1] - truth[-2] > 0  # drift really happened vs. the plan
     assert abs(tts_dur(out) - tl["total"]) < 0.3
 
@@ -387,7 +387,7 @@ def test_veo_scenes_never_freeze():
     """Veo clips are 8 s; scenes that need longer must be time-remapped, never held on a frozen frame,
     and every scene must be frame-exact so audio and video stay in sync."""
     r = client.post("/api/jobs", json={"mode": "3d", "engine": "veo", "languages": ["en"], "preset": "twinkle",
-                                        "target_seconds": 60, "bookends": False})
+                                        "vocals": "sung", "target_seconds": 90, "bookends": False})
     j = _wait(r.json()["id"])
     assert j["status"] == "done", j.get("error")
     o, tl = j["outputs"]["en"], j["timelines"]["en"]

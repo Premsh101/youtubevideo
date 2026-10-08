@@ -153,6 +153,8 @@ def mock_clip(first: Path, last: Path | None, out: Path) -> None:
         "-filter_complex",
         f"[0:v]scale={config.VIDEO_W}:{config.VIDEO_H},setsar=1[a];"
         f"[1:v]scale={config.VIDEO_W}:{config.VIDEO_H},setsar=1[b];"
-        f"[a][b]blend=all_expr='A*(1-T/{dur})+B*(T/{dur})',format=yuv420p",
+        # like a real Veo shot: things move all the time (gentle drift + zoom), fading to the end keyframe
+        f"[a]scale=iw*1.25:-2,crop={config.VIDEO_W}:{config.VIDEO_H}:x='(in_w-out_w)*t/{dur}':y='(in_h-out_h)/2'[am];"
+        f"[am][b]blend=all_expr='A*(1-T/{dur})+B*(T/{dur})',format=yuv420p",
         "-r", str(config.FPS), "-t", str(dur), "-c:v", "libx264", "-preset", "veryfast", str(out),
     ], check=True)

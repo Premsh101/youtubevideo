@@ -189,7 +189,9 @@ class Job:
         self.save()
 
     def _xfade(self) -> float:
-        return 0.4 if self.params.get("engine") == "veo" else config.CROSSFADE_SEC
+        """Cross-fade length, a whole number of frames (so scene starts stay on frame boundaries)."""
+        xf = 0.4 if self.params.get("engine") == "veo" else config.CROSSFADE_SEC
+        return round(xf * config.FPS) / config.FPS
 
     def _voice_lead(self) -> float:
         """Line starts when the cross-fade is ~60 % done: the new picture is clearly on screen,
@@ -202,7 +204,7 @@ class Job:
         durations = [max(min_len, lead + v["duration"] + TAIL + xf) for v in voices]
         if self.params.get("engine") != "veo":  # follow the music's bars
             durations = render.snap_to_bars(durations, xf, toddler.MUSIC["bpm"])
-        durations = [round(d * config.FPS) / config.FPS for d in durations]  # whole frames: no drift
+        durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1]
 
@@ -219,7 +221,7 @@ class Job:
             bounds = [0.0] + [max(0.0, t - lead) for t in planned_starts[1:]]
             durations = [b2 - b1 + xf for b1, b2 in zip(bounds, bounds[1:])] + [max(xf + 1, total - bounds[-1])]
             line_t, method = planned_starts, "plan"
-        durations = [round(d * config.FPS) / config.FPS for d in durations]  # whole frames: no drift
+        durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1], line_t, method
 

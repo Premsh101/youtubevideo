@@ -135,6 +135,17 @@ def freezes(video: Path, min_seconds: float = 0.5) -> list[dict]:
 
 
 # ------------------------------------------------------------------ joining
+def frame_exact(durations: list[float], xfade: float, fps: int) -> list[float]:
+    """Snap scene BOUNDARIES (not each length) to whole frames. Rounding lengths one by one lets the
+    error add up (audio slowly drifts); rounding the boundaries keeps every scene within half a frame
+    of where its audio is, however long the video. `xfade` must already be whole frames."""
+    exact = scene_starts(durations, xfade) + [scene_starts(durations, xfade)[-1] + durations[-1]]
+    snapped = [round(t * fps) / fps for t in exact]
+    out = [snapped[i + 1] - snapped[i] + xfade for i in range(len(durations) - 1)]
+    out.append(snapped[-1] - snapped[-2])
+    return [round(d * fps) / fps for d in out]
+
+
 def scene_starts(durations: list[float], xfade: float) -> list[float]:
     """Where each scene begins (its cross-fade starts) in the joined video."""
     starts = [0.0]
@@ -161,7 +172,7 @@ def crossfade_concat(clips: list[Path], durations: list[float], xfade: float, ou
         prev = "[0:v]"
         for i in range(1, n):
             label = "[v]" if i == n - 1 else f"[x{i}]"
-            parts.append(f"{prev}[{i}:v]xfade=transition=fade:duration={xfade}:offset={starts[i]:.3f}{label}")
+            parts.append(f"{prev}[{i}:v]xfade=transition=fade:duration={xfade}:offset={starts[i]:.6f}{label}")
             prev = label
         parts[-1] = parts[-1][:-3] + "[xx]"
         parts.append(f"[xx]fade=t=in:d=1,fade=t=out:st={total - 1.5:.3f}:d=1.5[v]")
@@ -297,7 +308,9 @@ def shift_srt(src: Path, offset: float, out: Path) -> Path:
 
 def mux(video: Path, audio: Path, out: Path) -> Path:
     _run(FF + ["-i", str(video), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
-               "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(out)])
+               "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out)])
+    # no -shortest: it stops at the audio buffer's edge and silently drops the last few video frames;
+    # both tracks are already exactly the same length
     return out
 
 

@@ -8,7 +8,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import characters, config, elevenlabs, presets, render, retry, script_gen, toddler, tts
+from . import characters, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -34,10 +34,15 @@ class Job:
             "created": time.time(), "attempts": 0, "spent_before_inr": 0.0,
         }
         if existing:  # resuming: keep what earlier attempts spent in the total
+            self.params = self.state["params"]
             prev = (existing.get("cost") or {}).get("total_inr", 0.0)
             self.state["spent_before_inr"] = existing.get("spent_before_inr", 0.0) + prev
             self.state["error"] = None
         self.save()
+
+    @classmethod
+    def load(cls, job_id: str) -> "Job":
+        return cls.resume(job_id)
 
     @classmethod
     def resume(cls, job_id: str) -> "Job":
@@ -59,16 +64,17 @@ class Job:
         self.save()
 
     # ---------------------------------------------------------------- pipeline
-    def run(self) -> None:
+    def run(self, target=None) -> None:
         """Run to completion. On Google quota exhaustion the job pauses and auto-resumes;
         everything already generated is cached, so a resume only pays for what is missing."""
+        target = target or self._run
         retry.set_status_callback(lambda msg: self.step(msg, self.state["progress"]))
         pause_idx = 0
         while True:
             self.state["attempts"] = self.state.get("attempts", 0) + 1
             try:
                 self.state["status"] = "running"
-                self._run()
+                target()
                 self.state["status"] = "done"
                 self.step("done", 1.0)
                 return
@@ -109,8 +115,11 @@ class Job:
             chars = [characters.get(c["id"]) for c in self.state["cast"]]
             for c in chars:
                 characters.ensure_sheet(c["id"], mode, self.ledger)
+        elif p.get("character_mode") == "describe" and p.get("character_description"):
+            self.step("Gemini is designing your described character", 0.03)
+            chars = characters.design_from_description(p["character_description"], mode, self.ledger)
         elif p.get("characters"):
-            self.step("Preparing pinned characters", 0.03)
+            self.step("Preparing characters from the library", 0.03)
             chars = [characters.get(c) for c in p["characters"]]
             for c in chars:
                 characters.ensure_sheet(c["id"], mode, self.ledger)
@@ -126,6 +135,8 @@ class Job:
                                             int(p.get("target_seconds") or config.TARGET_SECONDS), self.ledger)
         self.state["script"] = script
         scenes = script["scenes"]
+        for lang in langs:  # en + hi come with the script; any other language is adapted by Gemini
+            self._ensure_lyrics(lang)
         self.save()
 
         # 3. keyframes — one per scene (+1 ending frame for Veo chaining)
@@ -167,10 +178,7 @@ class Job:
                                             toddler.MUSIC["bpm"])
             for li, lang in enumerate(langs):
                 self.step(f"Composing the {lang.upper()} song with ElevenLabs", 0.47 + 0.06 * li)
-                songs[lang] = elevenlabs.compose(scenes, durations, lang, mode, self.ledger)
-                key = "line_hi" if lang == "hi" else "line_en"
-                voices[lang] = [{"path": None, "duration": d - 1.0, "text": s[key], "chorus": bool(s.get("is_chorus"))}
-                                for s, d in zip(scenes, durations)]
+                songs[lang], voices[lang] = self._sung(lang, durations)
         else:
             for li, lang in enumerate(langs):
                 self.step(f"Recording {lang.upper()} narration", 0.47 + 0.06 * li)
@@ -202,31 +210,86 @@ class Job:
         xf = 0.4 if engine == "veo" else config.CROSSFADE_SEC
         starts = render.crossfade_concat(clips, durations, xf, silent)
         total = starts[-1] + durations[-1]
-        music = get_music(total, script["title_en"]) if vocals != "sung" else None
-
-        # 7. per-language audio + mux + captions + thumbnail
-        for li, lang in enumerate(langs):
-            self.step(f"Mixing {lang.upper()} audio", 0.86 + 0.06 * li)
-            if vocals == "sung":
-                audio = render.song_to_track(songs[lang], total, self.dir / f"audio_{lang}.wav")
-            else:
-                audio = render.build_audio(voices[lang], starts, total, music, self.dir / f"audio_{lang}.wav", LEAD_IN)
-            final = render.mux(silent, audio, self.dir / f"final_{lang}.mp4")
-            srt = render.write_srt(voices[lang], starts, self.dir / f"captions_{lang}.srt", LEAD_IN)
-            thumb = render.thumbnail(final, self.dir / f"thumb_{lang}.jpg", at=min(3.0, total / 2))
-            self.state["outputs"][lang] = {
-                "video": final.name, "captions": srt.name, "thumbnail": thumb.name,
-                "duration": round(total, 1),
-                "title": script.get(f"title_{lang}") or script["title_en"],
-                "description": script.get(f"description_{lang}") or "",
-                "tags": script.get("tags", []),
-                "youtube": None,
-            }
-            self.save()
+        # the timeline is what lets any language be added later on top of the same visuals
+        self.state["timeline"] = {"durations": durations, "starts": starts, "total": total, "xfade": xf}
+        self.state["keyframes"] = [k.name for k in keyframes]
         for c in clips:
             c.unlink(missing_ok=True)
-        self.state["keyframes"] = [k.name for k in keyframes]
         self.save()
+
+        # 7. per-language audio + mux + captions + thumbnail + viral metadata
+        for li, lang in enumerate(langs):
+            self.step(f"Mixing {languages.name(lang)} audio", 0.86 + 0.06 * li)
+            self._finish_language(lang, voices[lang], songs.get(lang))
+
+    # ------------------------------------------------------------ languages
+    def _ensure_lyrics(self, lang: str) -> None:
+        script = self.state["script"]
+        key = f"line_{lang}"
+        if all(s.get(key) for s in script["scenes"]):
+            return
+        self.step(f"Gemini is adapting the lyrics into {languages.name(lang)}", self.state["progress"])
+        for s, line in zip(script["scenes"], metadata.translate_lines(script, lang, self.ledger)):
+            s[key] = line
+        self.save()
+
+    def _sung(self, lang: str, durations: list[float]) -> tuple[Path, list[dict]]:
+        scenes = self.state["script"]["scenes"]
+        song = elevenlabs.compose(scenes, durations, lang, self.params.get("mode", "2d"), self.ledger)
+        voices = [{"path": None, "duration": d - 1.0, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus"))}
+                  for s, d in zip(scenes, durations)]
+        return song, voices
+
+    def _finish_language(self, lang: str, voices: list[dict], song: Path | None) -> None:
+        tl = self.state["timeline"]
+        starts, total = tl["starts"], tl["total"]
+        silent = self.dir / "video_silent.mp4"
+        if song is not None:
+            audio = render.song_to_track(song, total, self.dir / f"audio_{lang}.wav")
+        else:
+            music = get_music(total, self.state["script"]["title_en"])  # same seed → same music in every language
+            audio = render.build_audio(voices, starts, total, music, self.dir / f"audio_{lang}.wav", LEAD_IN)
+        final = render.mux(silent, audio, self.dir / f"final_{lang}.mp4")
+        srt = render.write_srt(voices, starts, self.dir / f"captions_{lang}.srt", LEAD_IN)
+        thumb = render.thumbnail(final, self.dir / f"thumb_{lang}.jpg", at=min(3.0, total / 2))
+        self.step(f"Writing {languages.name(lang)} title, description & hashtags", self.state["progress"])
+        meta = metadata.viral_metadata(self.state["script"], lang, self.state.get("cast") or [], self.ledger)
+        self.state["outputs"][lang] = {
+            "video": final.name, "captions": srt.name, "thumbnail": thumb.name,
+            "duration": round(total, 1), "language": languages.name(lang),
+            **meta, "youtube": None,
+        }
+        self.save()
+
+    def _add_language(self, lang: str) -> None:
+        """New language on an existing video: only lyrics, voice and metadata are generated."""
+        if not self.state.get("timeline") or not (self.dir / "video_silent.mp4").exists():
+            raise RuntimeError("This video was made before multi-language support; re-create it once to add languages.")
+        self.step(f"Adding {languages.name(lang)} using the existing visuals", 0.1)
+        self._ensure_lyrics(lang)
+        durations = self.state["timeline"]["durations"]
+        if self.params.get("vocals") == "sung":
+            self.step(f"Composing the {languages.name(lang)} song", 0.4)
+            song, voices = self._sung(lang, durations)
+        else:
+            self.step(f"Recording {languages.name(lang)} narration", 0.4)
+            song = None
+            voices = tts.synthesize_scenes(self.state["script"]["scenes"], lang, self.ledger)
+            # the pictures are already timed; squeeze (max 1.35x) any line that runs longer than its scene
+            for i, v in enumerate(voices):
+                slot = durations[i] - LEAD_IN - self.state["timeline"]["xfade"] - 0.3
+                if v["duration"] > slot:
+                    fitted = self.dir / f"voice_{lang}_{i:02}.wav"
+                    v["path"] = str(render.speed_up(Path(v["path"]), v["duration"] / slot, fitted))
+                    v["duration"] = tts.media_duration(fitted)
+        self.step(f"Mixing {languages.name(lang)} audio", 0.8)
+        self._finish_language(lang, voices, song)
+        langs = self.params.setdefault("languages", [])
+        if lang not in langs:
+            langs.append(lang)
+
+    def add_language(self, lang: str) -> None:
+        self.run(lambda: self._add_language(lang))
 
 
 def delete_job(job_id: str) -> None:
@@ -244,5 +307,6 @@ def list_jobs() -> list[dict]:
         j = load_job(d.name)
         if j:
             jobs.append({k: j.get(k) for k in ("id", "status", "step", "progress", "created", "cost", "outputs")}
-                        | {"title": (j.get("script") or {}).get("title_en"), "params": j.get("params")})
+                        | {"title": (j.get("script") or {}).get("title_en"), "params": j.get("params"),
+                           "languages": list((j.get("outputs") or {}).keys())})
     return jobs

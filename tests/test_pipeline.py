@@ -14,6 +14,7 @@ os.environ["IMAGE_RPM"] = "0"          # no pacing in tests
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import config, costs, script_gen  # noqa: E402
+from app.tts import media_duration as tts_dur  # noqa: E402
 from app.main import app  # noqa: E402
 
 client = TestClient(app)
@@ -78,6 +79,56 @@ def test_full_job_both_languages_with_auto_casting():
         time.sleep(1)
     assert r["status"] == "done" and r["cost"]["total_usd"] == 0
     assert r["cost"]["total_inr_all_attempts"] >= j["cost"]["total_inr"]
+
+
+def _wait(job_id):
+    for _ in range(240):
+        j = client.get(f"/api/jobs/{job_id}").json()
+        if j["status"] in ("done", "error", "paused"):
+            return j
+        time.sleep(1)
+    return j
+
+
+def test_character_modes_and_deletes():
+    # describe mode: Gemini designs from the user's words, saves to library
+    r = client.post("/api/jobs", json={"mode": "3d", "languages": ["en"], "character_mode": "describe",
+                                        "character_description": "a pink bunny with a yellow scarf",
+                                        "preset": "twinkle", "target_seconds": 60})
+    j = _wait(r.json()["id"])
+    assert j["status"] == "done", j.get("error")
+    lib = {c["id"]: c for c in client.get("/api/characters").json()}
+    assert j["cast"][0]["id"] in lib and lib[j["cast"][0]["id"]]["described_by_user"]
+    # library mode requires a selection, and uses exactly that character
+    assert client.post("/api/jobs", json={"mode": "3d", "languages": ["en"], "character_mode": "library"}).status_code == 400
+    cid = j["cast"][0]["id"]
+    r = client.post("/api/jobs", json={"mode": "3d", "languages": ["en"], "character_mode": "library",
+                                        "characters": [cid], "preset": "twinkle", "target_seconds": 60})
+    j2 = _wait(r.json()["id"])
+    assert j2["status"] == "done" and [c["id"] for c in j2["cast"]] == [cid]
+    # viral metadata generated per language
+    o = j2["outputs"]["en"]
+    assert o["hashtags"] and all(h.startswith("#") for h in o["hashtags"]) and o["tags"]
+    assert sum(len(t) + 1 for t in o["tags"]) <= 500
+    # add German later: visuals reused, only lyrics + voice + metadata are new
+    silent = config.OUTPUT_DIR / j2["id"] / "video_silent.mp4"
+    before = silent.stat().st_mtime
+    assert client.post(f"/api/jobs/{j2['id']}/languages/de").json()["ok"]
+    time.sleep(1)
+    j3 = _wait(j2["id"])
+    assert j3["status"] == "done", j3.get("error")
+    assert set(j3["outputs"]) == {"en", "de"} and j3["script"]["scenes"][0]["line_de"]
+    assert silent.stat().st_mtime == before                      # no re-render of visuals
+    assert "image" not in j3["cost"]["by_kind"] or j3["cost"]["by_kind"]["image"]["usd"] == 0
+    de = config.OUTPUT_DIR / j2["id"] / j3["outputs"]["de"]["video"]
+    assert de.exists() and abs(tts_dur(de) - j3["timeline"]["total"]) < 0.5
+    assert client.post(f"/api/jobs/{j2['id']}/languages/xx").status_code == 400
+    # delete video + character
+    assert client.delete(f"/api/jobs/{j2['id']}").json()["ok"]
+    assert client.get(f"/api/jobs/{j2['id']}").status_code == 404
+    assert not (config.OUTPUT_DIR / j2["id"]).exists()
+    client.delete(f"/api/characters/{cid}")
+    assert cid not in [c["id"] for c in client.get("/api/characters").json()]
 
 
 def test_sung_vocals_job():

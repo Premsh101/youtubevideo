@@ -95,11 +95,16 @@ The page is one screen: left column = settings 1-2-3, right column = progress / 
 - *Motion engine*: `💸 Keyframes + smooth camera` (≈₹55 per video, default) or `🎬 Veo video clips` (≈₹1,500).
 - *Vocals*: `🗣 Spoken rhyme` (Google TTS, ≈₹3) or `🎤 Sung song` (ElevenLabs, ≈₹25 per language;
   greyed out until `ELEVENLABS_API_KEY` is set).
-- *Output videos*: tick **English**, **हिंदी** or both — each produces its own MP4.
+- *Output videos*: tick any languages (English, हिंदी, Urdu, Tamil, German, French, Spanish…) — each
+  produces its own MP4 with the same visuals.
 - *Target length* slider: 60–180 s (default 120).
 
-**3 · Characters** — nothing to do. Gemini casts from your library (reusing familiar faces) and
-invents a new character only if the rhyme needs one; it is saved for next time. Tap a card to pin one.
+**3 · Characters** — choose one:
+- `✨ Let Gemini create` (default): Gemini picks characters that fit the rhyme, reusing library ones
+  where possible and inventing new ones only if needed (saved to the library).
+- `📚 From library`: tap up to 2 saved characters (🗑 on a card deletes it from the library).
+- `✍️ Describe`: write the character in your own words ("a baby elephant called Gappu with a red
+  cap…"); Gemini turns it into a consistent character sheet, saved for future videos.
 
 Below the settings the grey line shows the **estimated cost in ₹** for exactly these choices.
 
@@ -117,8 +122,16 @@ the **running spend**. Wait ~3–6 minutes (longer with Veo).
 - *Cast*, *Lyrics* (EN + HI side by side), the keyframe strip, and **Cost of this video** in ₹
   broken down by Gemini text / images / voice or song / Veo, with cached (free) items marked.
 
+Each language also gets **YouTube text written for discovery**: a search-first title, a description
+whose first two lines carry the keywords, lyrics and a parent call-to-action, 15–25 tags (≤500 chars)
+and 3–5 hashtags (first 3 appear above the title). Open *Description & tags* to read or 📋 copy them;
+`📤 Post to YouTube` uses them automatically.
+
+**➕ Add another language** (under the players): pick e.g. German → *Create*. Only the lyrics,
+voice and YouTube text are generated; the pictures are reused, so it costs a few rupees and ~1 min.
+
 **Previous videos** (bottom right) lists every past job with status and cost — click a title to
-reopen it, download again or publish the other language later.
+reopen it, download again, add a language or publish later; 🗑 deletes it from the server.
 
 ### If you see "429 RESOURCE_EXHAUSTED"
 New GCP projects have small per-minute quotas (image model ≈ 5–10 requests/min). The app

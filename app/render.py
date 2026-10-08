@@ -114,7 +114,7 @@ def build_audio(voice_lines: list[dict], starts: list[float], total: float, musi
         else:
             delays.append(f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={ms}|{ms}[d{i}]")
     n = len(voice_lines)
-    voice_mix = "".join(f"[d{i}]" for i in range(n)) + f"amix=inputs={n}:normalize=0,alimiter=limit=0.95[voice]"
+    voice_mix = "".join(f"[d{i}]" for i in range(n)) + f"amix=inputs={n}:normalize=0,alimiter=limit=0.95,apad,atrim=duration={total:.3f}[voice]"
     duck = toddler.MUSIC["duck_db"]
     fc = ";".join(delays + [
         voice_mix,
@@ -134,6 +134,13 @@ def song_to_track(song: Path, total: float, out: Path) -> Path:
                f"aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=duration={total:.3f},"
                f"afade=t=out:st={max(0, total - 2.5):.3f}:d=2.5,loudnorm=I=-16:TP=-1.5:LRA=11",
                "-ar", "48000", str(out)])
+    return out
+
+
+def speed_up(path: Path, factor: float, out: Path) -> Path:
+    """Tempo-change without pitch shift so a longer translation fits an existing scene."""
+    factor = max(1.0, min(1.35, factor))
+    _run(FF + ["-i", str(path), "-af", f"atempo={factor:.3f}", str(out)])
     return out
 
 

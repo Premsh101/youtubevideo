@@ -59,8 +59,6 @@ and a DNS **A record** for e.g. `rhymes.yourdomain.com` → your server IP.
    ```
    VERTEX_SA_JSON=<paste the ENTIRE content of the JSON key from part A5, one line>
    GOOGLE_CLOUD_LOCATION=us-central1
-   APP_USER=admin
-   APP_PASSWORD=<a long password — this is the login for the whole app>
    ELEVENLABS_API_KEY=<from part B, or leave empty>
    YOUTUBE_REDIRECT_URI=https://rhymes.yourdomain.com/youtube/oauth2callback
    YOUTUBE_PRIVACY=private
@@ -73,8 +71,9 @@ and a DNS **A record** for e.g. `rhymes.yourdomain.com` → your server IP.
    - Content: paste the OAuth client JSON from part C2.
 6. Click **Deploy** (top-right). First build ≈3–5 min (installs ffmpeg + Python deps).
    Watch **Deployments → logs** until it shows *Application started*.
-7. Open `https://rhymes.yourdomain.com` → browser asks for username/password → `admin` / your
-   `APP_PASSWORD`. You should see the studio header with a **Connect YouTube** button.
+7. Open `https://rhymes.yourdomain.com` — no login. You should see the studio header with a
+   **Connect YouTube** button. (Optional: if you ever want a password, add env var
+   `APP_PASSWORD`; until then anyone who knows the URL can use it, so keep the URL private.)
 8. Click **Connect YouTube** → Google sign-in → choose the channel's account → *Continue* on
    the "unverified app" screen (it's your own app) → allow → you land back on the studio with
    **YouTube ✓ connected**. This is done once; the token is stored in the volume.

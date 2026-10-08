@@ -21,8 +21,7 @@ app = FastAPI(title="Toddler Rhyme Studio")
 
 
 class BasicAuth(BaseHTTPMiddleware):
-    """Protects the whole app (UI + API) when APP_PASSWORD is set — anyone who can reach the
-    page can spend your Vertex/ElevenLabs budget, so never expose it without this."""
+    """Optional: only active when APP_PASSWORD is set. Off by default (single-user app)."""
 
     async def dispatch(self, request: Request, call_next):
         if not config.APP_PASSWORD:

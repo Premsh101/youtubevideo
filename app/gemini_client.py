@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from . import config
+from . import config, retry
 from .costs import CostLedger
 
 _client = None
@@ -55,14 +55,14 @@ def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = Tr
         ledger.text(detail, 1500, 1500)
     else:
         from google.genai import types
-        resp = client().models.generate_content(
+        resp = retry.guarded("text", lambda: client().models.generate_content(
             model=config.TEXT_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 temperature=0.9,
             ),
-        )
+        ))
         usage = resp.usage_metadata
         ledger.text(detail, usage.prompt_token_count or 0, usage.candidates_token_count or 0)
         data = _parse_json(resp.text)
@@ -94,7 +94,7 @@ def generate_image(prompt: str, ledger: CostLedger, detail: str,
 
     if config.MOCK_AI:
         from .mock import mock_image
-        mock_image(prompt, out, aspect_ratio)
+        retry.guarded("image", lambda: mock_image(prompt, out, aspect_ratio))
         ledger.image(detail, 1)
         return out
 
@@ -109,15 +109,15 @@ def generate_image(prompt: str, ledger: CostLedger, detail: str,
             contents.append(Image.open(p))
     contents.append(prompt)
 
-    for attempt in range(3):
-        resp = client().models.generate_content(
+    for attempt in range(3):  # retries here are for "model returned no image"; quota retries live in retry.py
+        resp = retry.guarded("image", lambda: client().models.generate_content(
             model=config.IMAGE_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
                 image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
             ),
-        )
+        ))
         for part in resp.candidates[0].content.parts:
             if part.inline_data and part.inline_data.data:
                 img = Image.open(io.BytesIO(part.inline_data.data)).convert("RGB")
@@ -157,12 +157,12 @@ def generate_video_clip(prompt: str, first_frame: Path, last_frame: Path | None,
     )
     if last_frame:
         cfg["last_frame"] = types.Image(image_bytes=last_frame.read_bytes(), mime_type="image/png")
-    op = client().models.generate_videos(
+    op = retry.guarded("veo", lambda: client().models.generate_videos(
         model=config.VEO_MODEL,
         prompt=prompt,
         image=types.Image(image_bytes=first_frame.read_bytes(), mime_type="image/png"),
         config=types.GenerateVideosConfig(**cfg),
-    )
+    ))
     while not op.done:
         time.sleep(8)
         op = client().operations.get(op)

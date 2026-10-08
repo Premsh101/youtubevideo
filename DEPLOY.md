@@ -120,6 +120,18 @@ the **running spend**. Wait ~3–6 minutes (longer with Veo).
 **Previous videos** (bottom right) lists every past job with status and cost — click a title to
 reopen it, download again or publish the other language later.
 
+### If you see "429 RESOURCE_EXHAUSTED"
+New GCP projects have small per-minute quotas (image model ≈ 5–10 requests/min). The app
+now paces itself (`IMAGE_RPM=5`, `TEXT_RPM=10`, `VEO_RPM=2` env vars), retries with backoff,
+and if the quota is still exhausted it **pauses the job and auto-resumes** (2 → 5 → 10 → 15 min).
+Nothing is wasted: every generated image / script / voice line is cached, so a resume only pays
+for missing parts. A paused job shows **▶ Resume** in the result card. To raise the limit:
+GCP console → **IAM & Admin → Quotas & System Limits** → filter *Vertex AI API* and your model
+(e.g. `gemini-2.5-flash-image`) → tick the row → **Edit quota** → request e.g. 30/min.
+
+Finished videos stay in the server volume (`/srv/data/output`) until you press **🗑 Delete**, so
+you can download or post to YouTube any time later.
+
 ### Costs at a glance (defaults, ₹84/$)
 | Choice | per video (EN + HI) |
 |---|---|

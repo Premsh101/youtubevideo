@@ -8,7 +8,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import characters, config, elevenlabs, presets, render, script_gen, toddler, tts
+from . import characters, config, elevenlabs, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -19,22 +19,38 @@ MIN_SCENE_SEC = 5.0
 
 
 class Job:
-    def __init__(self, params: dict):
-        self.id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
+    PAUSE_SCHEDULE = [120, 300, 600, 900]  # seconds to wait between auto-resumes after quota exhaustion
+
+    def __init__(self, params: dict, job_id: str | None = None):
+        self.id = job_id or (time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6])
         self.dir = config.OUTPUT_DIR / self.id
         self.dir.mkdir(parents=True, exist_ok=True)
         self.params = params
         self.ledger = CostLedger()
-        self.state = {
+        existing = load_job(self.id) if job_id else None
+        self.state = existing or {
             "id": self.id, "status": "queued", "step": "queued", "progress": 0.0,
             "params": params, "script": None, "outputs": {}, "cost": None, "error": None,
-            "created": time.time(),
+            "created": time.time(), "attempts": 0, "spent_before_inr": 0.0,
         }
+        if existing:  # resuming: keep what earlier attempts spent in the total
+            prev = (existing.get("cost") or {}).get("total_inr", 0.0)
+            self.state["spent_before_inr"] = existing.get("spent_before_inr", 0.0) + prev
+            self.state["error"] = None
         self.save()
+
+    @classmethod
+    def resume(cls, job_id: str) -> "Job":
+        old = load_job(job_id)
+        if not old:
+            raise KeyError(job_id)
+        return cls(old["params"], job_id=job_id)
 
     # ---------------------------------------------------------------- helpers
     def save(self) -> None:
         self.state["cost"] = self.ledger.summary()
+        self.state["cost"]["total_inr_all_attempts"] = round(
+            self.state["cost"]["total_inr"] + self.state.get("spent_before_inr", 0.0), 2)
         (self.dir / "job.json").write_text(json.dumps(self.state, ensure_ascii=False, indent=1))
 
     def step(self, name: str, progress: float) -> None:
@@ -44,15 +60,36 @@ class Job:
 
     # ---------------------------------------------------------------- pipeline
     def run(self) -> None:
-        try:
-            self.state["status"] = "running"
-            self._run()
-            self.state["status"] = "done"
-            self.step("done", 1.0)
-        except Exception as exc:  # surfaced to the UI
-            self.state["status"] = "error"
-            self.state["error"] = f"{exc}\n{traceback.format_exc()[-1500:]}"
-            self.save()
+        """Run to completion. On Google quota exhaustion the job pauses and auto-resumes;
+        everything already generated is cached, so a resume only pays for what is missing."""
+        retry.set_status_callback(lambda msg: self.step(msg, self.state["progress"]))
+        pause_idx = 0
+        while True:
+            self.state["attempts"] = self.state.get("attempts", 0) + 1
+            try:
+                self.state["status"] = "running"
+                self._run()
+                self.state["status"] = "done"
+                self.step("done", 1.0)
+                return
+            except retry.QuotaExhausted as exc:
+                if pause_idx >= len(self.PAUSE_SCHEDULE):
+                    self.state["status"] = "paused"
+                    self.state["error"] = (f"{exc}\n\nAuto-resume gave up after {pause_idx} waits. Nothing is lost: "
+                                           "press Resume later (all finished parts are cached and free).")
+                    self.save()
+                    return
+                wait = self.PAUSE_SCHEDULE[pause_idx]
+                pause_idx += 1
+                self.state["status"] = "waiting"
+                self.step(f"Google quota exhausted — paused, auto-resuming in {wait // 60} min "
+                          f"(nothing already generated is lost)", self.state["progress"])
+                time.sleep(wait)
+            except Exception as exc:  # surfaced to the UI
+                self.state["status"] = "error"
+                self.state["error"] = f"{exc}\n{traceback.format_exc()[-1500:]}"
+                self.save()
+                return
 
     def _run(self) -> None:
         p = self.params
@@ -67,7 +104,12 @@ class Job:
                 p["topic"] = p.get("topic") or pr.get("topic") or pr["title"]
         # 1. casting: Gemini reuses library characters that fit, invents new ones only if needed.
         #    Sheets are generated once per character and reused forever.
-        if p.get("characters"):
+        if self.state.get("cast"):  # resuming: never re-roll the cast (would change script + images)
+            self.step("Resuming with the same characters", 0.03)
+            chars = [characters.get(c["id"]) for c in self.state["cast"]]
+            for c in chars:
+                characters.ensure_sheet(c["id"], mode, self.ledger)
+        elif p.get("characters"):
             self.step("Preparing pinned characters", 0.03)
             chars = [characters.get(c) for c in p["characters"]]
             for c in chars:
@@ -80,7 +122,7 @@ class Job:
 
         # 2. poem + scene plan (EN + HI in one call)
         self.step("Writing the rhyme and scene plan with Gemini", 0.08)
-        script = script_gen.generate_script(p.get("topic"), p.get("poem"), chars, mode, engine,
+        script = self.state.get("script") or script_gen.generate_script(p.get("topic"), p.get("poem"), chars, mode, engine,
                                             int(p.get("target_seconds") or config.TARGET_SECONDS), self.ledger)
         self.state["script"] = script
         scenes = script["scenes"]
@@ -185,6 +227,10 @@ class Job:
             c.unlink(missing_ok=True)
         self.state["keyframes"] = [k.name for k in keyframes]
         self.save()
+
+
+def delete_job(job_id: str) -> None:
+    shutil.rmtree(config.OUTPUT_DIR / job_id, ignore_errors=True)
 
 
 def load_job(job_id: str) -> dict | None:

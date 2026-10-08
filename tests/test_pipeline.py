@@ -7,6 +7,9 @@ os.environ["MOCK_AI"] = "1"
 os.environ.setdefault("DATA_DIR", os.path.join(os.path.dirname(__file__), "..", ".test_data"))
 os.environ["VIDEO_W"] = "640"
 os.environ["VIDEO_H"] = "360"
+os.environ["MOCK_FAIL_429"] = "2"       # first two image calls hit a simulated quota error
+os.environ["RETRY_BASE_SECONDS"] = "0.2"
+os.environ["IMAGE_RPM"] = "0"          # no pacing in tests
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -65,6 +68,16 @@ def test_full_job_both_languages_with_auto_casting():
     r = client.get(f"/api/jobs/{job['id']}/files/{j['outputs']['en']['video']}?download=1")
     assert r.status_code == 200
     assert client.get("/api/jobs").json()[0]["id"] == job["id"]
+    assert j["attempts"] == 1  # the simulated 429s were absorbed by per-call retries, not a job restart
+    # resume on a finished job is a no-op that costs nothing (everything cached)
+    r = client.post(f"/api/jobs/{job['id']}/resume").json()
+    for _ in range(120):
+        r = client.get(f"/api/jobs/{job['id']}").json()
+        if r["status"] == "done":
+            break
+        time.sleep(1)
+    assert r["status"] == "done" and r["cost"]["total_usd"] == 0
+    assert r["cost"]["total_inr_all_attempts"] >= j["cost"]["total_inr"]
 
 
 def test_sung_vocals_job():

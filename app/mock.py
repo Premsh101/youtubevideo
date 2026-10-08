@@ -78,7 +78,20 @@ def _colour_for(text: str) -> tuple[int, int, int]:
     return int(r * 255), int(g * 255), int(b * 255)
 
 
+_fail_budget = {"n": int(__import__("os").getenv("MOCK_FAIL_429", "0"))}
+
+
+def maybe_fail_429() -> None:
+    """Test hook: raise a 429-style error for the first MOCK_FAIL_429 image calls."""
+    if _fail_budget["n"] > 0:
+        _fail_budget["n"] -= 1
+        err = RuntimeError("429 RESOURCE_EXHAUSTED (simulated)")
+        err.code = 429
+        raise err
+
+
 def mock_image(prompt: str, out: Path, aspect_ratio: str) -> None:
+    maybe_fail_429()
     w, h = (config.VIDEO_W, config.VIDEO_H) if aspect_ratio == "16:9" else (768, 768)
     img = Image.new("RGB", (w, h), _colour_for(prompt))
     d = ImageDraw.Draw(img)

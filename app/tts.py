@@ -13,7 +13,7 @@ import subprocess
 import wave
 from pathlib import Path
 
-from . import config, toddler
+from . import config, retry, toddler
 from .costs import CostLedger
 
 _tts_client = None
@@ -60,11 +60,11 @@ def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = Fal
         return out
 
     from google.cloud import texttospeech as t
-    resp = _client().synthesize_speech(
+    resp = retry.guarded("tts", lambda: _client().synthesize_speech(
         input=t.SynthesisInput(ssml=_ssml(text, chorus)),
         voice=t.VoiceSelectionParams(language_code=config.TTS_LANG_CODES[lang], name=voice),
         audio_config=t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000),
-    )
+    ))
     out.write_bytes(resp.audio_content)
     ledger.tts(f"{lang} line", len(text))
     return out

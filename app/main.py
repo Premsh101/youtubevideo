@@ -157,6 +157,29 @@ def api_job_file(job_id: str, name: str, download: bool = False) -> FileResponse
     return FileResponse(p, filename=f"{job_id}_{p.name}" if download else None)
 
 
+@app.post("/api/jobs/{job_id}/resume")
+def api_resume_job(job_id: str) -> dict:
+    live = _jobs.get(job_id)
+    if live and live.state["status"] in ("running", "waiting", "queued"):
+        return live.state
+    try:
+        job = pipeline.Job.resume(job_id)
+    except KeyError:
+        raise HTTPException(404)
+    _jobs[job_id] = job
+    threading.Thread(target=job.run, daemon=True, name=f"job-{job_id}").start()
+    return job.state
+
+
+@app.delete("/api/jobs/{job_id}")
+def api_delete_job(job_id: str) -> dict:
+    live = _jobs.pop(job_id, None)
+    if live and live.state["status"] in ("running", "waiting"):
+        raise HTTPException(409, "job is still running")
+    pipeline.delete_job(job_id)
+    return {"ok": True}
+
+
 # -------------------------------------------------------------------- youtube
 @app.get("/youtube/auth")
 def yt_auth() -> RedirectResponse:

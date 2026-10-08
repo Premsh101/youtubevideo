@@ -109,9 +109,14 @@ $('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert(
 function watch(id){current=id;$('#progressCard').style.display='';$('#resultCard').style.display='none';clearInterval(poll);poll=setInterval(tick,1500);tick()}
 async function tick(){const j=await api('/api/jobs/'+current);$('#pBar').style.width=(j.progress*100)+'%';$('#pStep').textContent=j.step+(j.cost?` · spent so far ${inr(j.cost.total_inr)}`:'');
  if(j.script)$('#pTitle').textContent=j.script.title_en+' / '+(j.script.title_hi||'');
- if(j.status==='done'||j.status==='error'){clearInterval(poll);$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs()}}
+ if(j.status==='done'||j.status==='error'||j.status==='paused'){clearInterval(poll);$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs()}}
 
-function render(j){const c=$('#resultCard');c.style.display='';if(j.status==='error'){c.innerHTML=`<h2>Something went wrong</h2><div class="err">${j.error}</div>`;return}
+function render(j){const c=$('#resultCard');c.style.display='';
+ if(j.status==='error'||j.status==='paused'){const quota=/429|RESOURCE_EXHAUSTED|quota/i.test(j.error||'');
+  c.innerHTML=`<h2>${j.status==='paused'?'⏸ Paused — Google quota exhausted':'Something went wrong'}</h2>
+  ${quota?`<div class="est" style="margin-bottom:8px">Vertex AI rejected requests with <b>429 RESOURCE_EXHAUSTED</b> (per-minute quota). <b>Nothing is wasted</b>: every image, script and voice line already generated is cached, so Resume only pays for the missing parts. Spent so far across attempts: <b>${inr((j.cost||{}).total_inr_all_attempts||0)}</b>. To raise the limit: GCP console → IAM &amp; Admin → Quotas → filter "Vertex AI" + your image model → Edit quota.</div>`:''}
+  <div class="row" style="margin-bottom:8px"><button class="small" onclick="resume_('${j.id}')">▶ Resume (reuses cached parts)</button><button class="small" onclick="del_('${j.id}')">🗑 Delete</button></div>
+  <details><summary style="cursor:pointer;font-size:13px">Technical details</summary><div class="err">${j.error||''}</div></details>`;return}
  const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)',sung:'Sung song (ElevenLabs)'};
  const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':k==='sung'?'min':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
  const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${lang==='en'?'🇬🇧 English':'🇮🇳 हिंदी'} <span class="badge">${o.duration}s</span></h3>
@@ -124,14 +129,17 @@ function render(j){const c=$('#resultCard');c.style.display='';if(j.status==='er
   <div class="out">${outs}</div>
   <div class="kf">${(j.keyframes||[]).map(k=>`<img src="/api/jobs/${j.id}/files/${k}">`).join('')}</div>
   <h3>Lyrics</h3><div class="lyrics">${(s.scenes||[]).map(x=>`<div>${x.line_en}<br><span style="color:#777">${x.line_hi||''}</span></div>`).join('')}</div>
-  <h3>Cost of this video</h3><div class="cost"><table>${rows}</table><div class="total">Total: ${inr(cost.total_inr||0)} <small style="font-size:12px;color:#777;font-weight:400">($${(cost.total_usd||0).toFixed(3)} @ ₹${cost.usd_to_inr}/$ ${cfg.mock?'· MOCK mode, nothing billed':''})</small></div></div>`}
+  <div class="row" style="margin-top:8px"><button class="small" onclick="del_('${j.id}')">🗑 Delete from server</button><span class="est" style="margin:0">Files stay on the server until you delete them.</span></div>
+  <h3>Cost of this video</h3><div class="cost"><table>${rows}</table><div class="total">Total: ${inr(cost.total_inr_all_attempts||cost.total_inr||0)} <small style="font-size:12px;color:#777;font-weight:400">($${(cost.total_usd||0).toFixed(3)} @ ₹${cost.usd_to_inr}/$ ${cfg.mock?'· MOCK mode, nothing billed':''})</small></div></div>`}
 
 async function publish(id,lang,btn){if(!cfg.youtube.authorised){if(confirm('Connect your YouTube channel first?'))location.href='/youtube/auth';return}
  const privacy=prompt('Privacy: private / unlisted / public',cfg.youtube.privacy||'private');if(!privacy)return;btn.disabled=true;btn.textContent='Uploading…';
  try{const r=await api(`/api/jobs/${id}/youtube/${lang}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({privacy})});alert('Uploaded: '+r.url);render(await api('/api/jobs/'+id))}catch(e){alert(e.message);btn.disabled=false;btn.textContent='📤 Post to YouTube'}}
 
-async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${j.cost?inr(j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''}</div>`).join(''):'<i>None yet</i>'}
-async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued')watch(id);else render(j)}
+async function resume_(id){await api('/api/jobs/'+id+'/resume',{method:'POST'});watch(id)}
+async function del_(id){if(!confirm('Delete this video and its files from the server? (Downloaded/YouTube copies are unaffected)'))return;await api('/api/jobs/'+id,{method:'DELETE'});$('#resultCard').style.display='none';loadJobs()}
+async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${j.cost?inr(j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''}</div>`).join(''):'<i>None yet</i>'}
+async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued'||j.status==='waiting')watch(id);else render(j)}
 
 (async()=>{cfg=await api('/api/config');$('#ytstatus').innerHTML=cfg.youtube.authorised?'<span class="badge">YouTube ✓ connected</span>':cfg.youtube.configured?'<a class="small" style="text-decoration:none;color:inherit" href="/youtube/auth">Connect YouTube</a>':'<span class="badge" title="Add data/secrets/youtube_client_secret.json">YouTube not configured</span>';
  if(!cfg.elevenlabs){const b=document.querySelector('#vocals button[data-v=sung]');b.disabled=true;b.title='Set ELEVENLABS_API_KEY on the server';b.style.opacity=.5}

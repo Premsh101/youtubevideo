@@ -15,7 +15,7 @@ from pathlib import Path
 
 import httpx
 
-from . import config, toddler
+from . import config, retry, toddler
 from .costs import CostLedger
 
 API = os.getenv("ELEVENLABS_API", "https://api.elevenlabs.io")
@@ -70,12 +70,17 @@ def compose(scenes: list[dict], durations: list[float], lang: str, mode: str, le
     api_key = os.getenv("ELEVENLABS_API_KEY")
     if not api_key:
         raise RuntimeError("ELEVENLABS_API_KEY is not set (needed for sung vocals)")
-    with httpx.Client(timeout=600) as http:
-        r = http.post(f"{API}/v1/music", params={"output_format": "mp3_44100_128"},
-                      headers={"xi-api-key": api_key, "Content-Type": "application/json"},
-                      json={"model_id": MODEL, "composition_plan": plan, "respect_sections_durations": True})
-    if r.status_code >= 400:
-        raise RuntimeError(f"ElevenLabs music error {r.status_code}: {r.text[:500]}")
+    def _post():
+        with httpx.Client(timeout=600) as http:
+            r = http.post(f"{API}/v1/music", params={"output_format": "mp3_44100_128"},
+                          headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+                          json={"model_id": MODEL, "composition_plan": plan, "respect_sections_durations": True})
+        if r.status_code >= 400:
+            err = RuntimeError(f"ElevenLabs music error {r.status_code}: {r.text[:500]}")
+            err.status_code = r.status_code  # lets retry.py recognise 429/503
+            raise err
+        return r
+    r = retry.guarded("tts", _post)
     out.write_bytes(r.content)
     ledger.sung(f"{lang} song", minutes)
     return out

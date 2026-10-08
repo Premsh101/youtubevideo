@@ -15,7 +15,7 @@ from pathlib import Path
 
 import httpx
 
-from . import config, retry, toddler
+from . import config, languages, retry, toddler
 from .costs import CostLedger
 
 API = os.getenv("ELEVENLABS_API", "https://api.elevenlabs.io")
@@ -27,7 +27,7 @@ def is_configured() -> bool:
 
 
 def _styles(lang: str, mode: str) -> tuple[list[str], list[str]]:
-    lang_name = "Hindi" if lang == "hi" else "English"
+    lang_name = languages.name(lang)
     pos = [f"children's nursery rhyme sung in {lang_name}", "cheerful female lead vocal", "kids chorus sing-along",
            "clear pronunciation", f"{toddler.MUSIC['bpm']} bpm", "major key", "glockenspiel, ukulele, soft claps",
            "simple catchy melody", "preschool TV theme", "warm and gentle"]
@@ -36,7 +36,7 @@ def _styles(lang: str, mode: str) -> tuple[list[str], list[str]]:
 
 
 def build_plan(scenes: list[dict], durations: list[float], lang: str, mode: str) -> dict:
-    key = "line_hi" if lang == "hi" else "line_en"
+    key = f"line_{lang}"
     pos, neg = _styles(lang, mode)
     chunks = []
     for s, d in zip(scenes, durations):

@@ -34,6 +34,14 @@ _RHYME_HI = [
 
 
 def mock_json(prompt: str) -> dict:
+    if '"hashtags"' in prompt:
+        return {"title": "Twinkle Twinkle Little Star ⭐ | Nursery Rhymes & Kids Songs",
+                "description": "Twinkle Twinkle Little Star nursery rhyme for toddlers. Sing along!\n\nLyrics...",
+                "tags": ["twinkle twinkle little star", "nursery rhymes", "kids songs", "baby songs", "toddler learning"],
+                "hashtags": ["#nurseryrhymes", "#kidssongs", "#twinkletwinkle"]}
+    if '"translated_lines"' in prompt:
+        n = int(re.search(r"Below are exactly (\d+) lines", prompt).group(1))
+        return {"translated_lines": [f"Funkel funkel kleiner Stern {i + 1}" for i in range(n)], "title": "Funkel Stern"}
     if '"use_existing"' in prompt:
         existing = re.findall(r"id=([a-z0-9-]+):", prompt)
         if existing:
@@ -113,7 +121,7 @@ def mock_song(scenes, durations, lang, out: Path) -> None:
     total = sum(durations)
     bed = out.with_suffix(".bed.wav")
     synth_lullaby(total, f"song-{lang}", bed)
-    key = "line_hi" if lang == "hi" else "line_en"
+    key = f"line_{lang}"
     inputs, delays, t = ["-i", str(bed)], [], 0.0
     for i, (s, d) in enumerate(zip(scenes, durations)):
         v = out.with_suffix(f".v{i}.wav")

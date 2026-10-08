@@ -14,7 +14,7 @@ from starlette.responses import Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import characters, config, costs, elevenlabs, pipeline, presets, script_gen, youtube
+from . import characters, config, costs, elevenlabs, languages, pipeline, presets, script_gen, youtube
 from .costs import CostLedger
 
 app = FastAPI(title="Toddler Rhyme Studio")
@@ -100,6 +100,30 @@ def api_delete_character(cid: str) -> dict:
     return {"ok": True}
 
 
+@app.get("/api/languages")
+def api_languages() -> list[dict]:
+    return languages.listing()
+
+
+@app.post("/api/jobs/{job_id}/languages/{lang}")
+def api_add_language(job_id: str, lang: str) -> dict:
+    """Voice an existing video in another language: reuses all visuals, only audio + text are new."""
+    if lang not in languages.LANGUAGES:
+        raise HTTPException(400, f"unsupported language {lang}")
+    live = _jobs.get(job_id)
+    if live and live.state["status"] in ("running", "waiting", "queued"):
+        raise HTTPException(409, "this video is still being processed")
+    try:
+        job = pipeline.Job.load(job_id)
+    except KeyError:
+        raise HTTPException(404)
+    if job.state.get("status") != "done" and not job.state.get("outputs"):
+        raise HTTPException(409, "finish (or resume) the video first")
+    _jobs[job_id] = job
+    threading.Thread(target=job.add_language, args=(lang,), daemon=True, name=f"lang-{job_id}-{lang}").start()
+    return {"ok": True, "job": job_id, "language": lang}
+
+
 @app.get("/api/presets")
 def api_presets() -> list[dict]:
     return [{"id": p["id"], "title": p["title"], "lang": p["lang"]} for p in presets.PRESETS]
@@ -110,8 +134,10 @@ class JobIn(BaseModel):
     mode: Literal["2d", "3d"]
     engine: Literal["images", "veo"] = "images"
     vocals: Literal["tts", "sung"] = "tts"
-    languages: list[Literal["en", "hi"]] = ["en", "hi"]
-    characters: list[str] = Field([], description="Optional: pin library characters; empty = Gemini casts")
+    languages: list[str] = ["en", "hi"]
+    character_mode: Literal["auto", "library", "describe"] = "auto"
+    characters: list[str] = Field([], description="library mode: ids of library characters to use")
+    character_description: str | None = Field(None, description="describe mode: the character(s) in your words")
     topic: str | None = None
     poem: str | None = None
     preset: str | None = None
@@ -128,6 +154,15 @@ def api_estimate(body: JobIn) -> dict:
 def api_create_job(body: JobIn) -> dict:
     if not body.languages:
         raise HTTPException(400, "pick at least one language")
+    unknown = [lang for lang in body.languages if lang not in languages.LANGUAGES]
+    if unknown:
+        raise HTTPException(400, f"unsupported language(s): {unknown}")
+    if body.character_mode == "library" and not body.characters:
+        raise HTTPException(400, "Pick at least one character from the library")
+    if body.character_mode == "describe" and not (body.character_description or "").strip():
+        raise HTTPException(400, "Describe the character first")
+    if body.character_mode != "library":
+        body.characters = []
     if body.vocals == "sung" and not elevenlabs.is_configured():
         raise HTTPException(400, "Sung vocals need ELEVENLABS_API_KEY on the server")
     job = pipeline.Job(body.model_dump())
@@ -209,7 +244,8 @@ def api_publish(job_id: str, lang: str, body: PublishIn) -> dict:
         raise HTTPException(401, "Connect YouTube first (/youtube/auth)")
     o = j["outputs"][lang]
     d = config.OUTPUT_DIR / job_id
-    desc = (body.description or o["description"]) + "\n\n#nurseryrhymes #toddlers #kidssongs"
+    hashtags = " ".join(o.get("hashtags") or ["#nurseryrhymes", "#kidssongs", "#toddlers"])
+    desc = (body.description or o["description"]) + "\n\n" + hashtags  # first 3 hashtags show above the title
     res = youtube.upload(d / o["video"], body.title or o["title"], desc, o["tags"], lang,
                          thumbnail=d / o["thumbnail"], captions=d / o["captions"], privacy=body.privacy)
     o["youtube"] = res

@@ -13,7 +13,7 @@ import subprocess
 import wave
 from pathlib import Path
 
-from . import config, retry, toddler
+from . import config, languages, retry, toddler
 from .costs import CostLedger
 
 _tts_client = None
@@ -46,8 +46,8 @@ def _ssml(text: str, chorus: bool = False) -> str:
 
 
 def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = False) -> Path:
-    voice = config.TTS_VOICES[lang]
-    key = hashlib.sha256(f"{voice}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}".encode()).hexdigest()[:24]
+    voice = languages.tts_voice(lang)
+    key = hashlib.sha256(f"{lang}|{voice}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}".encode()).hexdigest()[:24]
     out = config.CACHE_DIR / "tts" / f"{key}.wav"
     if out.exists():
         ledger.tts(f"{lang} line", len(text), cached=True)
@@ -62,7 +62,8 @@ def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = Fal
     from google.cloud import texttospeech as t
     resp = retry.guarded("tts", lambda: _client().synthesize_speech(
         input=t.SynthesisInput(ssml=_ssml(text, chorus)),
-        voice=t.VoiceSelectionParams(language_code=config.TTS_LANG_CODES[lang], name=voice),
+        voice=(t.VoiceSelectionParams(language_code=languages.tts_locale(lang), name=voice) if voice else
+               t.VoiceSelectionParams(language_code=languages.tts_locale(lang), ssml_gender=t.SsmlVoiceGender.FEMALE)),
         audio_config=t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000),
     ))
     out.write_bytes(resp.audio_content)
@@ -91,7 +92,7 @@ def _mock_voice(text: str, out: Path) -> None:
 
 def synthesize_scenes(scenes: list[dict], lang: str, ledger: CostLedger) -> list[dict]:
     """Return [{path, duration}] aligned with scenes."""
-    key = "line_en" if lang == "en" else "line_hi"
+    key = f"line_{lang}"
     out = []
     for s in scenes:
         p = synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus")))

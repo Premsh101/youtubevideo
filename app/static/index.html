@@ -57,13 +57,16 @@ video{width:100%;border-radius:12px;background:#000}
   <label>Vocals</label>
   <div class="seg" id="vocals"><button data-v="tts" class="on">🗣 Spoken rhyme (Google TTS, ~₹3)</button><button data-v="sung">🎤 Sung song (ElevenLabs, ~₹35/lang)</button></div>
   <label>Output videos (one separate MP4 per language, same visuals)</label>
-  <div class="row"><label style="margin:0"><input type="checkbox" id="langEn" checked> English</label><label style="margin:0"><input type="checkbox" id="langHi" checked> हिंदी</label></div>
+  <div class="row" id="langs"></div>
+  <div class="est" style="margin:4px 0 0">You can add more languages to a finished video later — only the voice is regenerated, visuals are reused.</div>
   <label>Target length: <span id="lenLbl">120</span> s</label>
   <input type="range" id="len" min="60" max="180" step="10" value="120" style="width:100%">
 
-  <h2 style="margin-top:18px">3 · Characters <span class="badge" id="charCount">Gemini casts automatically</span></h2>
-  <div class="est" style="margin:0 0 8px">Gemini picks characters to fit the rhyme — reusing ones already in the library and inventing new ones only when needed. Optionally tap to pin favourites.</div>
-  <div class="chars" id="chars"></div>
+  <h2 style="margin-top:18px">3 · Characters <span class="badge" id="charCount"></span></h2>
+  <div class="seg" id="charMode"><button data-v="auto" class="on">✨ Let Gemini create</button><button data-v="library">📚 From library</button><button data-v="describe">✍️ Describe</button></div>
+  <div id="cmAuto" class="est" style="margin:8px 0 0">Gemini picks characters that fit the rhyme — reusing ones already in your library and inventing new ones only when needed. New ones are saved to the library.</div>
+  <div id="cmLibrary" style="display:none;margin-top:8px"><div class="est" style="margin:0 0 6px">Tap to select (up to 2). 🗑 removes a character from the library.</div><div class="chars" id="chars"></div></div>
+  <div id="cmDescribe" style="display:none"><label>Describe your character(s)</label><textarea id="charDesc" style="min-height:80px" placeholder="e.g. A chubby baby elephant called Gappu, light blue with a red cap, loves splashing water. And his best friend, a tiny yellow chick."></textarea><div class="est" style="margin:4px 0 0">Gemini turns this into a consistent character sheet and saves it to the library for future videos.</div></div>
 
   <div class="est" id="est"></div>
   <button class="primary" id="go">✨ Create video</button>
@@ -81,35 +84,37 @@ video{width:100%;border-radius:12px;background:#000}
 </main>
 <script>
 const $=s=>document.querySelector(s);const api=(u,o)=>fetch(u,o).then(async r=>{if(!r.ok)throw new Error((await r.text())||r.status);return r.json()});
-let cfg={},selected=new Set(),mode='3d',engine='images',vocals='tts',src='famous',current=null,poll=null;
+let cfg={},selected=new Set(),mode='3d',engine='images',vocals='tts',src='famous',charMode='auto',current=null,poll=null;
 const inr=v=>'₹'+Number(v).toFixed(2);
 
 function seg(id,cb){document.querySelectorAll(id+' button').forEach(b=>b.onclick=()=>{document.querySelectorAll(id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.v)})}
-seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;estimate()});seg('#vocals',v=>{vocals=v;estimate()});
+seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;estimate()});seg('#charMode',v=>{charMode=v;for(const k of ['auto','library','describe'])$('#cm'+k[0].toUpperCase()+k.slice(1)).style.display=k===v?'':'none';cnt()});seg('#vocals',v=>{vocals=v;estimate()});
 function setSrc(v){src=v;for(const k of ['famous','auto','own']){$('#src'+k[0].toUpperCase()+k.slice(1)).classList.toggle('on',k===v);$('#'+k+'Box').style.display=k===v?'':'none'}}
 $('#srcFamous').onclick=()=>setSrc('famous');$('#srcAuto').onclick=()=>setSrc('auto');$('#srcOwn').onclick=()=>setSrc('own');
 $('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
-['#langEn','#langHi'].forEach(s=>$(s).onchange=estimate);
+let LANGS=[];const LNAME=c=>{const l=LANGS.find(x=>x.code===c);return l?`${l.name}${l.native!==l.name?' · '+l.native:''}`:c};
 
-function params(){const languages=[];if($('#langEn').checked)languages.push('en');if($('#langHi').checked)languages.push('hi');
- return{mode,engine,vocals,languages,characters:[...selected],preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
+function params(){const languages=[...document.querySelectorAll('#langs input:checked')].map(x=>x.value);
+ return{mode,engine,vocals,languages,character_mode:charMode,characters:charMode==='library'?[...selected]:[],character_description:charMode==='describe'?($('#charDesc').value.trim()||null):null,preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
 
 async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
  $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
 
 async function loadChars(){const cs=await api('/api/characters');
- $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}</div>`).join(''):'<i class="est">Library is empty — Gemini will create the first characters with your first video.</i>';
- document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');cnt()});cnt()}
-function cnt(){$('#charCount').textContent=selected.size?selected.size+' pinned':'Gemini casts automatically'}
+ $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}<br><button class="small" style="margin-top:4px;padding:2px 8px" onclick="event.stopPropagation();delChar('${c.id}','${c.name.replace(/'/g,'')}')">🗑</button></div>`).join(''):'<i class="est">Library is empty — use “Let Gemini create” or “Describe” first; those characters are saved here.</i>';
+ document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;if(!selected.has(id)&&selected.size>=2)return alert('Up to 2 characters per video');selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');cnt()});
+ for(const id of [...selected])if(!cs.some(c=>c.id===id))selected.delete(id);cnt()}
+function cnt(){$('#charCount').textContent=charMode==='library'?selected.size+' selected':charMode==='describe'?'your description':'Gemini decides'}
+async function delChar(id,name){if(!confirm(`Delete ${name} from the library? Videos already made are not affected.`))return;await api('/api/characters/'+id,{method:'DELETE'});selected.delete(id);loadChars()}
 
 
-$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language'); if(!confirm(`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
+$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language');if(charMode==='library'&&!p.characters.length)return alert('Pick at least one character from the library');if(charMode==='describe'&&!p.character_description)return alert('Describe your character first'); if(!confirm(`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
  $('#go').disabled=true;const j=await api('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(p)});watch(j.id)};
 
 function watch(id){current=id;$('#progressCard').style.display='';$('#resultCard').style.display='none';clearInterval(poll);poll=setInterval(tick,1500);tick()}
 async function tick(){const j=await api('/api/jobs/'+current);$('#pBar').style.width=(j.progress*100)+'%';$('#pStep').textContent=j.step+(j.cost?` · spent so far ${inr(j.cost.total_inr)}`:'');
  if(j.script)$('#pTitle').textContent=j.script.title_en+' / '+(j.script.title_hi||'');
- if(j.status==='done'||j.status==='error'||j.status==='paused'){clearInterval(poll);$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs()}}
+ if(j.status==='done'||j.status==='error'||j.status==='paused'){clearInterval(poll);$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs();loadChars()}}
 
 function render(j){const c=$('#resultCard');c.style.display='';
  if(j.status==='error'||j.status==='paused'){const quota=/429|RESOURCE_EXHAUSTED|quota/i.test(j.error||'');
@@ -119,14 +124,23 @@ function render(j){const c=$('#resultCard');c.style.display='';
   <details><summary style="cursor:pointer;font-size:13px">Technical details</summary><div class="err">${j.error||''}</div></details>`;return}
  const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)',sung:'Sung song (ElevenLabs)'};
  const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':k==='sung'?'min':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
- const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${lang==='en'?'🇬🇧 English':'🇮🇳 हिंदी'} <span class="badge">${o.duration}s</span></h3>
+ const esc=t=>String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+ const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${LNAME(lang)} <span class="badge">${o.duration}s</span></h3>
   <video controls preload="metadata" src="/api/jobs/${j.id}/files/${o.video}" poster="/api/jobs/${j.id}/files/${o.thumbnail}"></video>
-  <div style="font-size:13px;margin:6px 0"><b>${o.title}</b><br>${o.description}</div>
+  <div style="font-size:13px;margin:6px 0"><b>${esc(o.title)}</b> <button class="small" style="padding:1px 6px" onclick="copyTxt(this,${esc(JSON.stringify(o.title||''))})">📋</button>
+   <div style="color:#2a5bd7;margin:4px 0">${(o.hashtags||[]).map(esc).join(' ')}</div>
+   <details><summary style="cursor:pointer">Description &amp; tags (written for YouTube search)</summary>
+    <div style="white-space:pre-wrap;background:#fafafa;border-radius:8px;padding:8px;margin:6px 0">${esc(o.description)}</div>
+    <button class="small" onclick="copyTxt(this,${esc(JSON.stringify((o.description||'')+'\n\n'+(o.hashtags||[]).join(' ')))})">📋 Copy description + hashtags</button>
+    <div style="margin:6px 0">${(o.tags||[]).map(t=>`<span class="badge" style="margin:2px">${esc(t)}</span>`).join('')}</div>
+    <button class="small" onclick="copyTxt(this,${esc(JSON.stringify((o.tags||[]).join(', ')))})">📋 Copy tags</button>
+   </details></div>
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
   ${o.youtube?`<a class="small" style="text-decoration:none" href="${o.youtube.url}" target="_blank">▶ On YouTube (${o.youtube.privacy})</a>`:`<button class="small" onclick="publish('${j.id}','${lang}',this)">📤 Post to YouTube</button>`}</div></div>`).join('');
  c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
   <div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>
   <div class="out">${outs}</div>
+  ${j.timeline?`<div class="row" style="margin-top:10px;padding:10px;background:#f4fbff;border-radius:12px"><b style="font-size:14px">➕ Add another language</b><select id="addLang" style="width:auto;flex:1">${LANGS.filter(l=>!(j.outputs||{})[l.code]).map(l=>`<option value="${l.code}">${l.name}${l.native!==l.name?' · '+l.native:''}</option>`).join('')}</select><button class="small" onclick="addLang('${j.id}')">Create (visuals reused)</button></div>`:''}
   <div class="kf">${(j.keyframes||[]).map(k=>`<img src="/api/jobs/${j.id}/files/${k}">`).join('')}</div>
   <h3>Lyrics</h3><div class="lyrics">${(s.scenes||[]).map(x=>`<div>${x.line_en}<br><span style="color:#777">${x.line_hi||''}</span></div>`).join('')}</div>
   <div class="row" style="margin-top:8px"><button class="small" onclick="del_('${j.id}')">🗑 Delete from server</button><span class="est" style="margin:0">Files stay on the server until you delete them.</span></div>
@@ -136,14 +150,19 @@ async function publish(id,lang,btn){if(!cfg.youtube.authorised){if(confirm('Conn
  const privacy=prompt('Privacy: private / unlisted / public',cfg.youtube.privacy||'private');if(!privacy)return;btn.disabled=true;btn.textContent='Uploading…';
  try{const r=await api(`/api/jobs/${id}/youtube/${lang}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({privacy})});alert('Uploaded: '+r.url);render(await api('/api/jobs/'+id))}catch(e){alert(e.message);btn.disabled=false;btn.textContent='📤 Post to YouTube'}}
 
+async function addLang(id){const lang=$('#addLang').value;if(!lang)return;if(!confirm(`Create the ${LNAME(lang)} version? Only lyrics, voice and YouTube text are generated — the pictures are reused (a few rupees).`))return;
+ try{await api(`/api/jobs/${id}/languages/${lang}`,{method:'POST'});watch(id)}catch(e){alert(e.message)}}
+function copyTxt(btn,t){navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='✓ Copied';setTimeout(()=>btn.textContent=o,1200)})}
 async function resume_(id){await api('/api/jobs/'+id+'/resume',{method:'POST'});watch(id)}
-async function del_(id){if(!confirm('Delete this video and its files from the server? (Downloaded/YouTube copies are unaffected)'))return;await api('/api/jobs/'+id,{method:'DELETE'});$('#resultCard').style.display='none';loadJobs()}
-async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${j.cost?inr(j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''}</div>`).join(''):'<i>None yet</i>'}
+async function del_(id){if(!confirm('Delete this video and its files from the server? (Downloaded/YouTube copies are unaffected)'))return;try{await api('/api/jobs/'+id,{method:'DELETE'})}catch(e){return alert(e.message)}if(current===id||$('#resultCard').innerHTML.includes(id))$('#resultCard').style.display='none';loadJobs()}
+async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${(j.languages||[]).map(l=>`<span class="badge">${l}</span>`).join(' ')} ${j.cost?inr(j.cost.total_inr_all_attempts||j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''} <button class="small" style="float:right;padding:2px 8px" title="Delete video" onclick="del_('${j.id}')">🗑</button></div>`).join(''):'<i>None yet</i>'}
 async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued'||j.status==='waiting')watch(id);else render(j)}
 
 (async()=>{cfg=await api('/api/config');$('#ytstatus').innerHTML=cfg.youtube.authorised?'<span class="badge">YouTube ✓ connected</span>':cfg.youtube.configured?'<a class="small" style="text-decoration:none;color:inherit" href="/youtube/auth">Connect YouTube</a>':'<span class="badge" title="Add data/secrets/youtube_client_secret.json">YouTube not configured</span>';
  if(!cfg.elevenlabs){const b=document.querySelector('#vocals button[data-v=sung]');b.disabled=true;b.title='Set ELEVENLABS_API_KEY on the server';b.style.opacity=.5}
  if(cfg.mock)$('#ytstatus').innerHTML+=' <span class="badge" style="background:var(--yellow)">MOCK_AI</span>';
+ LANGS=await api('/api/languages');$('#langs').innerHTML=LANGS.map(l=>`<label style="margin:0;font-size:13px;color:var(--ink);white-space:nowrap"><input type="checkbox" value="${l.code}" ${['en','hi'].includes(l.code)?'checked':''}> ${l.name}${l.native!==l.name?' · '+l.native:''}</label>`).join('');
+ document.querySelectorAll('#langs input').forEach(x=>x.onchange=estimate);
  const ps=await api('/api/presets');$('#preset').innerHTML=ps.map(p=>`<option value="${p.id}">${p.lang==='hi'?'🇮🇳':'🇬🇧'} ${p.title}</option>`).join('');
  await loadChars();estimate();loadJobs()})();
 </script>

@@ -91,6 +91,40 @@ def ensure_sheet(cid: str, mode: str, ledger: CostLedger) -> Path:
     return dest
 
 
+def design_from_description(description: str, mode: str, ledger: CostLedger, max_chars: int = 2) -> list[dict]:
+    """User described the character(s) in their own words; Gemini turns that into consistent,
+    toddler-friendly character profiles (saved to the library for reuse) and draws the sheets."""
+    prompt = f"""You are the character designer for a preschool (age 1-3) nursery-rhyme YouTube channel.
+The user described the character(s) they want:
+<<{description}>>
+
+Turn this into at most {max_chars} character(s). Keep everything the user specified (species, names,
+colours, clothing); fill in anything missing so they are cute, round, non-scary, with big friendly eyes
+and bright colours from: {', '.join(k.replace('_', ' ') for k in toddler.PALETTE)}.
+
+Return JSON:
+{{"characters": [{{"name": short name toddlers can say, "species": str, "personality": "3 words",
+   "colours": [2 colours], "signature_item": "one small wearable item",
+   "reference_sheet_prompt": "one paragraph describing the character for an image model"}}]}}"""
+    data = generate_json(prompt, ledger, "character design")
+    items = data.get("characters") if isinstance(data.get("characters"), list) else [data]
+    cast = []
+    for c in items[:max_chars]:
+        if not c.get("name") or not c.get("species"):
+            continue
+        c.pop("id", None)
+        c.setdefault("personality", "happy and friendly")
+        c.setdefault("colours", ["sunshine yellow", "sky blue"])
+        c.setdefault("signature_item", "a little red bow")
+        c["described_by_user"] = description
+        cast.append(save(c))
+    if not cast:
+        raise RuntimeError("Gemini could not design a character from that description — try adding the animal/object type")
+    for c in cast:
+        ensure_sheet(c["id"], mode, ledger)
+    return cast
+
+
 def cast_with_gemini(topic: str | None, poem: str | None, mode: str, ledger: CostLedger,
                      max_chars: int = 2) -> list[dict]:
     """Ask Gemini which characters the rhyme needs: reuse from the library if they fit,

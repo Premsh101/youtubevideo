@@ -38,6 +38,10 @@ class CostLedger:
         usd = 0.0 if cached else chars / 1e6 * config.PRICES["tts_per_1m_chars"]
         self.items.append(LineItem("tts", detail, chars, usd, cached))
 
+    def sung(self, detail: str, minutes: float, cached: bool = False) -> None:
+        usd = 0.0 if cached else minutes * config.PRICES["sung_per_minute"]
+        self.items.append(LineItem("sung", detail, minutes, usd, cached))
+
     @property
     def total_usd(self) -> float:
         return sum(i.usd for i in self.items)
@@ -63,7 +67,8 @@ class CostLedger:
         }
 
 
-def estimate(num_scenes: int, engine: str, languages: list[str], chars_per_lang: int = 1200) -> dict:
+def estimate(num_scenes: int, engine: str, languages: list[str], chars_per_lang: int = 1200,
+             vocals: str = "tts", seconds: int = 120) -> dict:
     """Rough pre-flight estimate shown before the user clicks Generate."""
     led = CostLedger()
     led.text("script", 2500, 2500)
@@ -71,5 +76,8 @@ def estimate(num_scenes: int, engine: str, languages: list[str], chars_per_lang:
     if engine == "veo":
         led.veo("clips", num_scenes * config.VEO_CLIP_SECONDS)
     for lang in languages:
-        led.tts(lang, chars_per_lang)
+        if vocals == "sung":
+            led.sung(lang, seconds / 60)
+        else:
+            led.tts(lang, chars_per_lang)
     return led.summary()

@@ -11,6 +11,9 @@ services:
       - USD_TO_INR=${USD_TO_INR:-84}
       - YOUTUBE_REDIRECT_URI=${YOUTUBE_REDIRECT_URI:-https://rhymes.example.com/youtube/oauth2callback}
       - YOUTUBE_PRIVACY=${YOUTUBE_PRIVACY:-private}
+      - APP_USER=${APP_USER:-admin}
+      - APP_PASSWORD=${APP_PASSWORD}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
       - MOCK_AI=${MOCK_AI:-0}
     volumes:
       - studio_data:/srv/data      # characters, cache, finished videos, YouTube token

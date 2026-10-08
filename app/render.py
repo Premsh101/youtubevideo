@@ -128,6 +128,15 @@ def build_audio(voice_lines: list[dict], starts: list[float], total: float, musi
     return out
 
 
+def song_to_track(song: Path, total: float, out: Path) -> Path:
+    """Sung mode: the song already contains vocals + instruments; just fit, fade and normalise."""
+    _run(FF + ["-i", str(song), "-af",
+               f"aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=duration={total:.3f},"
+               f"afade=t=out:st={max(0, total - 2.5):.3f}:d=2.5,loudnorm=I=-16:TP=-1.5:LRA=11",
+               "-ar", "48000", str(out)])
+    return out
+
+
 def mux(video: Path, audio: Path, out: Path) -> Path:
     _run(FF + ["-i", str(video), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
                "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(out)])
@@ -152,5 +161,5 @@ def thumbnail(video: Path, out: Path, at: float = 3.0) -> Path:
     return out
 
 
-__all__ = ["snap_to_bars", "image_to_clip", "fit_clip", "crossfade_concat", "build_audio", "mux", "write_srt",
+__all__ = ["song_to_track", "snap_to_bars", "image_to_clip", "fit_clip", "crossfade_concat", "build_audio", "mux", "write_srt",
            "thumbnail", "media_duration"]

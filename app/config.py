@@ -83,11 +83,17 @@ PRICES = {
     "veo_per_second": 0.15,
     # per 1M characters
     "tts_per_1m_chars": 16.0,
+    # per minute of sung song (ElevenLabs Music API; check your plan, varies)
+    "sung_per_minute": 0.30,
 }
 for _k in list(PRICES):
     _env = os.getenv("PRICE_" + _k.upper())
     if _env:
         PRICES[_k] = float(_env)
+
+# --- App protection (HTTP Basic auth on every page/API when set) ---------
+APP_USER = os.getenv("APP_USER", "admin")
+APP_PASSWORD = os.getenv("APP_PASSWORD")
 
 # --- YouTube ----------------------------------------------------------------
 YOUTUBE_CLIENT_SECRETS = Path(os.getenv("YOUTUBE_CLIENT_SECRETS", SECRETS_DIR / "youtube_client_secret.json"))

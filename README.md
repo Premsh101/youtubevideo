@@ -21,6 +21,8 @@ Character sheets (made once per character) ────────────�
                  final_en.mp4 (English)  ·  final_hi.mp4 (Hindi)  ·  captions · thumbnail · cost in ₹ · ▶ YouTube each
 ```
 
+See **[DEPLOY.md](DEPLOY.md)** for the click-by-click setup (GCP, ElevenLabs, YouTube, Coolify) and the in-app walkthrough.
+
 ## Quick start
 
 ```bash

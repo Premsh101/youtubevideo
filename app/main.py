@@ -5,14 +5,42 @@ import threading
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+import base64
+import secrets
+
+from fastapi import FastAPI, HTTPException, Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import characters, config, costs, pipeline, presets, script_gen, youtube
+from . import characters, config, costs, elevenlabs, pipeline, presets, script_gen, youtube
 from .costs import CostLedger
 
 app = FastAPI(title="Toddler Rhyme Studio")
+
+
+class BasicAuth(BaseHTTPMiddleware):
+    """Protects the whole app (UI + API) when APP_PASSWORD is set — anyone who can reach the
+    page can spend your Vertex/ElevenLabs budget, so never expose it without this."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not config.APP_PASSWORD:
+            return await call_next(request)
+        hdr = request.headers.get("authorization", "")
+        ok = False
+        if hdr.startswith("Basic "):
+            try:
+                user, _, pw = base64.b64decode(hdr[6:]).decode().partition(":")
+                ok = secrets.compare_digest(user, config.APP_USER) and secrets.compare_digest(pw, config.APP_PASSWORD)
+            except Exception:
+                ok = False
+        if not ok:
+            return Response("Login required", 401, headers={"WWW-Authenticate": 'Basic realm="Toddler Rhyme Studio"'})
+        return await call_next(request)
+
+
+app.add_middleware(BasicAuth)
 STATIC = Path(__file__).parent / "static"
 _jobs: dict[str, pipeline.Job] = {}
 
@@ -32,6 +60,8 @@ def get_config() -> dict:
                    "tts": config.TTS_VOICES},
         "prices_usd": config.PRICES,
         "usd_to_inr": config.USD_TO_INR,
+        "elevenlabs": elevenlabs.is_configured(),
+        "auth": bool(config.APP_PASSWORD),
         "youtube": {"configured": youtube.is_configured(), "authorised": youtube.is_authorised(),
                     "privacy": config.YOUTUBE_PRIVACY},
     }
@@ -80,6 +110,7 @@ def api_presets() -> list[dict]:
 class JobIn(BaseModel):
     mode: Literal["2d", "3d"]
     engine: Literal["images", "veo"] = "images"
+    vocals: Literal["tts", "sung"] = "tts"
     languages: list[Literal["en", "hi"]] = ["en", "hi"]
     characters: list[str] = Field([], description="Optional: pin library characters; empty = Gemini casts")
     topic: str | None = None
@@ -91,13 +122,15 @@ class JobIn(BaseModel):
 @app.post("/api/estimate")
 def api_estimate(body: JobIn) -> dict:
     n = script_gen.scene_count(body.engine, body.target_seconds)
-    return {"scenes": n, **costs.estimate(n, body.engine, body.languages)}
+    return {"scenes": n, **costs.estimate(n, body.engine, body.languages, vocals=body.vocals, seconds=body.target_seconds)}
 
 
 @app.post("/api/jobs")
 def api_create_job(body: JobIn) -> dict:
     if not body.languages:
         raise HTTPException(400, "pick at least one language")
+    if body.vocals == "sung" and not elevenlabs.is_configured():
+        raise HTTPException(400, "Sung vocals need ELEVENLABS_API_KEY on the server")
     job = pipeline.Job(body.model_dump())
     _jobs[job.id] = job
     threading.Thread(target=job.run, daemon=True, name=f"job-{job.id}").start()

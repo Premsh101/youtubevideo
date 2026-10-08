@@ -8,7 +8,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import characters, config, presets, render, script_gen, toddler, tts
+from . import characters, config, elevenlabs, presets, render, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -59,6 +59,7 @@ class Job:
         mode = p.get("mode", "2d")
         engine = p.get("engine", "images")
         langs = p.get("languages") or ["en", "hi"]
+        vocals = p.get("vocals", "tts")  # tts = spoken rhyme (cheap) | sung = ElevenLabs song
         if p.get("preset"):  # famous public-domain rhyme chosen in the UI
             pr = presets.get(p["preset"])
             if pr:
@@ -113,18 +114,31 @@ class Job:
             keyframes.append(dest)
         self.save()
 
-        # 4. narration per language → scene durations
+        # 4. vocals per language → scene durations
         voices: dict[str, list[dict]] = {}
-        for li, lang in enumerate(langs):
-            self.step(f"Recording {lang.upper()} narration", 0.47 + 0.06 * li)
-            voices[lang] = tts.synthesize_scenes(scenes, lang, self.ledger)
+        songs: dict[str, Path] = {}
         min_len = float(config.VEO_CLIP_SECONDS) if engine == "veo" else MIN_SCENE_SEC
-        durations = []
-        for i in range(len(scenes)):
-            need = max(v[i]["duration"] for v in voices.values()) + LEAD_IN + TAIL + config.CROSSFADE_SEC
-            durations.append(max(min_len, need))
-        if engine != "veo":  # Veo clips are a fixed 8 s; keyframe scenes can follow the beat
-            durations = render.snap_to_bars(durations, config.CROSSFADE_SEC, toddler.MUSIC["bpm"])
+        if vocals == "sung":
+            # fixed, bar-aligned scene lengths; the song is composed to that plan
+            per = max(min_len, int(p.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
+            durations = render.snap_to_bars([per] * len(scenes), config.CROSSFADE_SEC if engine != "veo" else 0.4,
+                                            toddler.MUSIC["bpm"])
+            for li, lang in enumerate(langs):
+                self.step(f"Composing the {lang.upper()} song with ElevenLabs", 0.47 + 0.06 * li)
+                songs[lang] = elevenlabs.compose(scenes, durations, lang, mode, self.ledger)
+                key = "line_hi" if lang == "hi" else "line_en"
+                voices[lang] = [{"path": None, "duration": d - 1.0, "text": s[key], "chorus": bool(s.get("is_chorus"))}
+                                for s, d in zip(scenes, durations)]
+        else:
+            for li, lang in enumerate(langs):
+                self.step(f"Recording {lang.upper()} narration", 0.47 + 0.06 * li)
+                voices[lang] = tts.synthesize_scenes(scenes, lang, self.ledger)
+            durations = []
+            for i in range(len(scenes)):
+                need = max(v[i]["duration"] for v in voices.values()) + LEAD_IN + TAIL + config.CROSSFADE_SEC
+                durations.append(max(min_len, need))
+            if engine != "veo":  # Veo clips are a fixed 8 s; keyframe scenes can follow the beat
+                durations = render.snap_to_bars(durations, config.CROSSFADE_SEC, toddler.MUSIC["bpm"])
 
         # 5. motion: Ken-Burns clips, or Veo clips chained first→last frame
         clips: list[Path] = []
@@ -146,12 +160,15 @@ class Job:
         xf = 0.4 if engine == "veo" else config.CROSSFADE_SEC
         starts = render.crossfade_concat(clips, durations, xf, silent)
         total = starts[-1] + durations[-1]
-        music = get_music(total, script["title_en"])
+        music = get_music(total, script["title_en"]) if vocals != "sung" else None
 
         # 7. per-language audio + mux + captions + thumbnail
         for li, lang in enumerate(langs):
             self.step(f"Mixing {lang.upper()} audio", 0.86 + 0.06 * li)
-            audio = render.build_audio(voices[lang], starts, total, music, self.dir / f"audio_{lang}.wav", LEAD_IN)
+            if vocals == "sung":
+                audio = render.song_to_track(songs[lang], total, self.dir / f"audio_{lang}.wav")
+            else:
+                audio = render.build_audio(voices[lang], starts, total, music, self.dir / f"audio_{lang}.wav", LEAD_IN)
             final = render.mux(silent, audio, self.dir / f"final_{lang}.mp4")
             srt = render.write_srt(voices[lang], starts, self.dir / f"captions_{lang}.srt", LEAD_IN)
             thumb = render.thumbnail(final, self.dir / f"thumb_{lang}.jpg", at=min(3.0, total / 2))

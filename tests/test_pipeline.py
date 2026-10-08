@@ -24,6 +24,15 @@ def test_estimate_and_scene_count():
     assert est["by_kind"]["image"]["quantity"] == 11
     veo = costs.estimate(10, "veo", ["en"])
     assert veo["total_usd"] > est["total_usd"]
+    sung = costs.estimate(10, "images", ["en"], vocals="sung", seconds=120)
+    assert sung["by_kind"]["sung"]["quantity"] == 2.0
+
+
+def test_basic_auth_blocks_when_password_set(monkeypatch):
+    monkeypatch.setattr(config, "APP_PASSWORD", "s3cret")
+    assert client.get("/api/config").status_code == 401
+    assert client.get("/api/config", auth=("admin", "s3cret")).status_code == 200
+    assert client.get("/api/config", auth=("admin", "wrong")).status_code == 401
 
 
 def test_full_job_both_languages_with_auto_casting():
@@ -56,3 +65,17 @@ def test_full_job_both_languages_with_auto_casting():
     r = client.get(f"/api/jobs/{job['id']}/files/{j['outputs']['en']['video']}?download=1")
     assert r.status_code == 200
     assert client.get("/api/jobs").json()[0]["id"] == job["id"]
+
+
+def test_sung_vocals_job():
+    body = {"mode": "3d", "engine": "images", "languages": ["hi"], "vocals": "sung",
+            "preset": "machli", "target_seconds": 60}
+    job = client.post("/api/jobs", json=body).json()
+    for _ in range(240):
+        j = client.get(f"/api/jobs/{job['id']}").json()
+        if j["status"] in ("done", "error"):
+            break
+        time.sleep(1)
+    assert j["status"] == "done", j.get("error")
+    assert "sung" in j["cost"]["by_kind"] and "tts" not in j["cost"]["by_kind"]
+    assert (config.OUTPUT_DIR / job["id"] / j["outputs"]["hi"]["video"]).exists()

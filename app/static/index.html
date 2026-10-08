@@ -54,6 +54,8 @@ video{width:100%;border-radius:12px;background:#000}
   <div class="seg" id="mode"><button data-v="2d">🎨 2D cartoon</button><button data-v="3d" class="on">🧊 3D rendered (like top channels)</button></div>
   <label>Motion engine</label>
   <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
+  <label>Vocals</label>
+  <div class="seg" id="vocals"><button data-v="tts" class="on">🗣 Spoken rhyme (Google TTS, ~₹3)</button><button data-v="sung">🎤 Sung song (ElevenLabs, ~₹25/lang)</button></div>
   <label>Output videos (one separate MP4 per language, same visuals)</label>
   <div class="row"><label style="margin:0"><input type="checkbox" id="langEn" checked> English</label><label style="margin:0"><input type="checkbox" id="langHi" checked> हिंदी</label></div>
   <label>Target length: <span id="lenLbl">120</span> s</label>
@@ -79,18 +81,18 @@ video{width:100%;border-radius:12px;background:#000}
 </main>
 <script>
 const $=s=>document.querySelector(s);const api=(u,o)=>fetch(u,o).then(async r=>{if(!r.ok)throw new Error((await r.text())||r.status);return r.json()});
-let cfg={},selected=new Set(),mode='3d',engine='images',src='famous',current=null,poll=null;
+let cfg={},selected=new Set(),mode='3d',engine='images',vocals='tts',src='famous',current=null,poll=null;
 const inr=v=>'₹'+Number(v).toFixed(2);
 
 function seg(id,cb){document.querySelectorAll(id+' button').forEach(b=>b.onclick=()=>{document.querySelectorAll(id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.v)})}
-seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;estimate()});
+seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;estimate()});seg('#vocals',v=>{vocals=v;estimate()});
 function setSrc(v){src=v;for(const k of ['famous','auto','own']){$('#src'+k[0].toUpperCase()+k.slice(1)).classList.toggle('on',k===v);$('#'+k+'Box').style.display=k===v?'':'none'}}
 $('#srcFamous').onclick=()=>setSrc('famous');$('#srcAuto').onclick=()=>setSrc('auto');$('#srcOwn').onclick=()=>setSrc('own');
 $('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
 ['#langEn','#langHi'].forEach(s=>$(s).onchange=estimate);
 
 function params(){const languages=[];if($('#langEn').checked)languages.push('en');if($('#langHi').checked)languages.push('hi');
- return{mode,engine,languages,characters:[...selected],preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
+ return{mode,engine,vocals,languages,characters:[...selected],preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
 
 async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
  $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
@@ -110,14 +112,14 @@ async function tick(){const j=await api('/api/jobs/'+current);$('#pBar').style.w
  if(j.status==='done'||j.status==='error'){clearInterval(poll);$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs()}}
 
 function render(j){const c=$('#resultCard');c.style.display='';if(j.status==='error'){c.innerHTML=`<h2>Something went wrong</h2><div class="err">${j.error}</div>`;return}
- const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)'};
- const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
+ const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)',sung:'Sung song (ElevenLabs)'};
+ const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':k==='sung'?'min':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
  const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${lang==='en'?'🇬🇧 English':'🇮🇳 हिंदी'} <span class="badge">${o.duration}s</span></h3>
   <video controls preload="metadata" src="/api/jobs/${j.id}/files/${o.video}" poster="/api/jobs/${j.id}/files/${o.thumbnail}"></video>
   <div style="font-size:13px;margin:6px 0"><b>${o.title}</b><br>${o.description}</div>
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
   ${o.youtube?`<a class="small" style="text-decoration:none" href="${o.youtube.url}" target="_blank">▶ On YouTube (${o.youtube.privacy})</a>`:`<button class="small" onclick="publish('${j.id}','${lang}',this)">📤 Post to YouTube</button>`}</div></div>`).join('');
- c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span></h2>
+ c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
   <div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>
   <div class="out">${outs}</div>
   <div class="kf">${(j.keyframes||[]).map(k=>`<img src="/api/jobs/${j.id}/files/${k}">`).join('')}</div>
@@ -132,6 +134,7 @@ async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=j
 async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued')watch(id);else render(j)}
 
 (async()=>{cfg=await api('/api/config');$('#ytstatus').innerHTML=cfg.youtube.authorised?'<span class="badge">YouTube ✓ connected</span>':cfg.youtube.configured?'<a class="small" style="text-decoration:none;color:inherit" href="/youtube/auth">Connect YouTube</a>':'<span class="badge" title="Add data/secrets/youtube_client_secret.json">YouTube not configured</span>';
+ if(!cfg.elevenlabs){const b=document.querySelector('#vocals button[data-v=sung]');b.disabled=true;b.title='Set ELEVENLABS_API_KEY on the server';b.style.opacity=.5}
  if(cfg.mock)$('#ytstatus').innerHTML+=' <span class="badge" style="background:var(--yellow)">MOCK_AI</span>';
  const ps=await api('/api/presets');$('#preset').innerHTML=ps.map(p=>`<option value="${p.id}">${p.lang==='hi'?'🇮🇳':'🇬🇧'} ${p.title}</option>`).join('');
  await loadChars();estimate();loadJobs()})();

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toddler Rhyme Studio</title>
+<style>
+:root{--bg:#fff8e7;--card:#ffffff;--ink:#2b2b2b;--muted:#6b6b6b;--yellow:#ffd93d;--blue:#6bcbff;--pink:#ffa3d7;--green:#8be78b;--red:#ff6b6b;--purple:#c3a6ff;--line:#efe4c8}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:18px 24px;background:linear-gradient(90deg,var(--yellow),var(--pink),var(--blue));display:flex;align-items:center;gap:14px}
+header h1{margin:0;font-size:22px}header small{color:#333;opacity:.8}
+main{max-width:1100px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1fr;gap:18px}
+@media(min-width:900px){main{grid-template-columns:420px 1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 4px 14px rgba(0,0,0,.04)}
+h2{margin:0 0 12px;font-size:17px}label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input[type=text],textarea,select{width:100%;padding:9px 10px;border:1px solid #ddd;border-radius:10px;font:inherit}
+textarea{min-height:110px;resize:vertical}
+.seg{display:flex;gap:6px}.seg button{flex:1;padding:9px;border:2px solid #e5e5e5;background:#fafafa;border-radius:10px;cursor:pointer;font:inherit}
+.seg button.on{border-color:var(--blue);background:#eaf7ff;font-weight:600}
+.chars{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.char{border:2px solid #eee;border-radius:12px;padding:6px;cursor:pointer;text-align:center;font-size:12px;background:#fff}
+.char.on{border-color:var(--pink);background:#fff2fa}.char img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:#f3f3f3}
+.char .ph{width:100%;aspect-ratio:16/9;border-radius:8px;background:repeating-linear-gradient(45deg,#f6f6f6,#f6f6f6 8px,#eee 8px,#eee 16px);display:flex;align-items:center;justify-content:center;color:#999}
+button.primary{width:100%;margin-top:14px;padding:13px;border:0;border-radius:12px;background:var(--red);color:#fff;font-size:16px;font-weight:700;cursor:pointer}
+button.primary:disabled{opacity:.5;cursor:default}
+button.small{padding:7px 11px;border:1px solid #ddd;background:#fff;border-radius:9px;cursor:pointer;font:inherit;font-size:13px}
+.est{margin-top:10px;font-size:13px;color:var(--muted)}.est b{color:var(--ink)}
+.bar{height:10px;background:#eee;border-radius:6px;overflow:hidden;margin:8px 0}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--blue));transition:width .4s}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+video{width:100%;border-radius:12px;background:#000}
+.out{display:grid;grid-template-columns:1fr;gap:14px}@media(min-width:700px){.out{grid-template-columns:1fr 1fr}}
+.cost{font-size:14px}.cost table{width:100%;border-collapse:collapse;font-size:13px}.cost td{padding:4px 0;border-bottom:1px dashed #eee}.cost .total{font-size:20px;font-weight:800;color:#2a7a2a}
+.err{white-space:pre-wrap;background:#fff0f0;color:#a00;padding:10px;border-radius:10px;font-size:12px}
+.badge{display:inline-block;background:#eee;border-radius:999px;padding:2px 9px;font-size:12px}
+.lyrics{font-size:13px;columns:2;column-gap:18px}.lyrics div{break-inside:avoid;margin-bottom:6px;padding:4px 6px;background:#fafafa;border-radius:6px}
+.jobs{font-size:13px}.jobs a{cursor:pointer;color:#0a66c2}
+.kf{display:flex;gap:4px;overflow-x:auto;margin:8px 0}.kf img{height:54px;border-radius:6px}
+</style>
+</head>
+<body>
+<header><span style="font-size:30px">🧸</span><div><h1>Toddler Rhyme Studio</h1><small>Gemini on Vertex AI · 2-min rhymes · English + हिंदी · cost in ₹</small></div>
+<div style="margin-left:auto" id="ytstatus"></div></header>
+<main>
+<section>
+ <div class="card">
+  <h2>1 · What should the rhyme be about?</h2>
+  <div class="seg"><button id="srcAuto" class="on">Let Gemini write it</button><button id="srcOwn">I have a poem</button></div>
+  <div id="autoBox"><label>Topic (optional)</label><input type="text" id="topic" placeholder="e.g. brushing teeth, rainy day, counting ducks"></div>
+  <div id="ownBox" style="display:none"><label>Paste your poem / rhyme (English or Hindi)</label><textarea id="poem" placeholder="Johny Johny yes papa..."></textarea></div>
+
+  <h2 style="margin-top:18px">2 · Look &amp; feel</h2>
+  <label>Animation mode</label>
+  <div class="seg" id="mode"><button data-v="2d" class="on">🎨 2D cartoon</button><button data-v="3d">🧊 3D rendered</button></div>
+  <label>Motion engine</label>
+  <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
+  <label>Languages</label>
+  <div class="row"><label style="margin:0"><input type="checkbox" id="langEn" checked> English</label><label style="margin:0"><input type="checkbox" id="langHi" checked> हिंदी</label></div>
+  <label>Target length: <span id="lenLbl">120</span> s</label>
+  <input type="range" id="len" min="60" max="180" step="10" value="120" style="width:100%">
+
+  <h2 style="margin-top:18px">3 · Characters <span class="badge" id="charCount"></span></h2>
+  <div class="chars" id="chars"></div>
+  <div class="row" style="margin-top:8px"><input type="text" id="brief" placeholder="New character brief, e.g. a shy purple turtle" style="flex:1"><button class="small" id="addChar">+ Design</button></div>
+
+  <div class="est" id="est"></div>
+  <button class="primary" id="go">✨ Create video</button>
+ </div>
+</section>
+
+<section>
+ <div class="card" id="progressCard" style="display:none">
+  <h2 id="pTitle">Working…</h2><div class="bar"><i id="pBar" style="width:0"></i></div><div id="pStep" class="est"></div>
+  <div class="kf" id="pKf"></div>
+ </div>
+ <div class="card" id="resultCard" style="display:none"></div>
+ <div class="card"><h2>Previous videos</h2><div class="jobs" id="jobs"></div></div>
+</section>
+</main>
+<script>
+const $=s=>document.querySelector(s);const api=(u,o)=>fetch(u,o).then(async r=>{if(!r.ok)throw new Error((await r.text())||r.status);return r.json()});
+let cfg={},selected=new Set(),mode='2d',engine='images',current=null,poll=null;
+const inr=v=>'₹'+Number(v).toFixed(2);
+
+function seg(id,cb){document.querySelectorAll(id+' button').forEach(b=>b.onclick=()=>{document.querySelectorAll(id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.v)})}
+seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;estimate()});
+$('#srcAuto').onclick=()=>{$('#srcAuto').classList.add('on');$('#srcOwn').classList.remove('on');$('#autoBox').style.display='';$('#ownBox').style.display='none'};
+$('#srcOwn').onclick=()=>{$('#srcOwn').classList.add('on');$('#srcAuto').classList.remove('on');$('#autoBox').style.display='none';$('#ownBox').style.display=''};
+$('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
+['#langEn','#langHi'].forEach(s=>$(s).onchange=estimate);
+
+function params(){const languages=[];if($('#langEn').checked)languages.push('en');if($('#langHi').checked)languages.push('hi');
+ const own=$('#srcOwn').classList.contains('on');
+ return{mode,engine,languages,characters:[...selected],topic:own?null:($('#topic').value||null),poem:own?($('#poem').value||null):null,target_seconds:+$('#len').value}}
+
+async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
+ $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
+
+async function loadChars(){const cs=await api('/api/characters');if(!selected.size)cs.slice(0,2).forEach(c=>selected.add(c.id));
+ $('#chars').innerHTML=cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}</div>`).join('');
+ document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');$('#charCount').textContent=selected.size+' selected'});
+ $('#charCount').textContent=selected.size+' selected'}
+
+$('#addChar').onclick=async()=>{const brief=$('#brief').value.trim();if(!brief)return alert('Describe the character first');$('#addChar').disabled=true;$('#addChar').textContent='Designing…';
+ try{const r=await api('/api/characters',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({brief,mode,generate_sheet:true})});selected.add(r.character.id);$('#brief').value='';await loadChars();alert(`Created ${r.character.name}. Reference sheet cost ${inr(r.cost.total_inr)} — reused for free in every video.`)}
+ catch(e){alert(e.message)}finally{$('#addChar').disabled=false;$('#addChar').textContent='+ Design'}};
+
+$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language');if(!selected.size)return alert('Pick at least one character');
+ if(!confirm(`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
+ $('#go').disabled=true;const j=await api('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(p)});watch(j.id)};
+
+function watch(id){current=id;$('#progressCard').style.display='';$('#resultCard').style.display='none';clearInterval(poll);poll=setInterval(tick,1500);tick()}
+async function tick(){const j=await api('/api/jobs/'+current);$('#pBar').style.width=(j.progress*100)+'%';$('#pStep').textContent=j.step+(j.cost?` · spent so far ${inr(j.cost.total_inr)}`:'');
+ if(j.script)$('#pTitle').textContent=j.script.title_en+' / '+(j.script.title_hi||'');
+ if(j.status==='done'||j.status==='error'){clearInterval(poll);$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs()}}
+
+function render(j){const c=$('#resultCard');c.style.display='';if(j.status==='error'){c.innerHTML=`<h2>Something went wrong</h2><div class="err">${j.error}</div>`;return}
+ const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)'};
+ const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
+ const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${lang==='en'?'🇬🇧 English':'🇮🇳 हिंदी'} <span class="badge">${o.duration}s</span></h3>
+  <video controls preload="metadata" src="/api/jobs/${j.id}/files/${o.video}" poster="/api/jobs/${j.id}/files/${o.thumbnail}"></video>
+  <div style="font-size:13px;margin:6px 0"><b>${o.title}</b><br>${o.description}</div>
+  <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
+  ${o.youtube?`<a class="small" style="text-decoration:none" href="${o.youtube.url}" target="_blank">▶ On YouTube (${o.youtube.privacy})</a>`:`<button class="small" onclick="publish('${j.id}','${lang}',this)">📤 Post to YouTube</button>`}</div></div>`).join('');
+ c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span></h2>
+  <div class="out">${outs}</div>
+  <div class="kf">${(j.keyframes||[]).map(k=>`<img src="/api/jobs/${j.id}/files/${k}">`).join('')}</div>
+  <h3>Lyrics</h3><div class="lyrics">${(s.scenes||[]).map(x=>`<div>${x.line_en}<br><span style="color:#777">${x.line_hi||''}</span></div>`).join('')}</div>
+  <h3>Cost of this video</h3><div class="cost"><table>${rows}</table><div class="total">Total: ${inr(cost.total_inr||0)} <small style="font-size:12px;color:#777;font-weight:400">($${(cost.total_usd||0).toFixed(3)} @ ₹${cost.usd_to_inr}/$ ${cfg.mock?'· MOCK mode, nothing billed':''})</small></div></div>`}
+
+async function publish(id,lang,btn){if(!cfg.youtube.authorised){if(confirm('Connect your YouTube channel first?'))location.href='/youtube/auth';return}
+ const privacy=prompt('Privacy: private / unlisted / public',cfg.youtube.privacy||'private');if(!privacy)return;btn.disabled=true;btn.textContent='Uploading…';
+ try{const r=await api(`/api/jobs/${id}/youtube/${lang}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({privacy})});alert('Uploaded: '+r.url);render(await api('/api/jobs/'+id))}catch(e){alert(e.message);btn.disabled=false;btn.textContent='📤 Post to YouTube'}}
+
+async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${j.cost?inr(j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''}</div>`).join(''):'<i>None yet</i>'}
+async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued')watch(id);else render(j)}
+
+(async()=>{cfg=await api('/api/config');$('#ytstatus').innerHTML=cfg.youtube.authorised?'<span class="badge">YouTube ✓ connected</span>':cfg.youtube.configured?'<a class="small" style="text-decoration:none;color:inherit" href="/youtube/auth">Connect YouTube</a>':'<span class="badge" title="Add data/secrets/youtube_client_secret.json">YouTube not configured</span>';
+ if(cfg.mock)$('#ytstatus').innerHTML+=' <span class="badge" style="background:var(--yellow)">MOCK_AI</span>';
+ await loadChars();estimate();loadJobs()})();
+</script>
+</body>
+</html>

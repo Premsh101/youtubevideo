@@ -225,3 +225,126 @@ def test_lyrics_on_screen_toggle_and_old_videos():
     assert j3["outputs"]["hi"]["lyrics_on_screen"] and (d / j3["outputs"]["hi"]["video"]).exists()
     assert j3["cost"]["total_usd"] == 0 and paid >= 0     # toggling lyrics never costs API money
     assert client.post(f"/api/jobs/{j['id']}/lyrics?lang=fr").status_code == 404
+
+
+def test_publish_everywhere_vertical_cuts_and_signed_links(monkeypatch):
+    import json as _json
+    from app import public_urls, social, youtube
+    # pretend accounts are connected (mock mode never calls the real APIs)
+    config.YOUTUBE_TOKEN.write_text("{}")
+    (config.SECRETS_DIR / "youtube_channel_default.json").write_text(_json.dumps({"title": "Sunave Kids"}))
+    social.STORE.write_text(_json.dumps({"pages": [{"id": "123", "name": "Sunave Kids", "access_token": "x",
+                                                    "instagram": {"id": "9", "username": "sunavekids"}}]}))
+    st = client.get("/api/social/status").json()
+    assert st["youtube"]["channels"]["default"]["title"] == "Sunave Kids" and st["meta"]["instagram"]["username"] == "sunavekids"
+
+    monkeypatch.setattr(config, "REEL_MAX_SECONDS", 20.0)   # force a cut so the scene-boundary logic runs
+    r = client.post("/api/jobs", json={"mode": "3d", "languages": ["hi"], "preset": "chanda-mama", "target_seconds": 40})
+    j = _wait(r.json()["id"])
+    assert j["status"] == "done", j.get("error")
+    r = client.post(f"/api/jobs/{j['id']}/publish/hi",
+                    json={"targets": ["instagram", "facebook", "youtube_short", "youtube"], "privacy": "unlisted"})
+    assert r.status_code == 200, r.text
+    for _ in range(240):
+        pub = client.get(f"/api/jobs/{j['id']}").json()["outputs"]["hi"].get("published", {})
+        if pub and all(p["status"] in ("done", "error") for p in pub.values()):
+            break
+        time.sleep(1)
+    assert {k: v["status"] for k, v in pub.items()} == {t: "done" for t in ("youtube", "youtube_short", "facebook", "instagram")}, pub
+    assert pub["youtube"]["privacy"] == "unlisted" and pub["youtube_short"]["url"].startswith("https://youtube.com/shorts/")
+
+    d = config.OUTPUT_DIR / j["id"]
+    reel = min(d.glob("*_vertical_*s.mp4"), key=lambda f: int(f.stem.rsplit("_", 1)[1][:-1]))  # Reel = shortest cut
+    dims = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                           "-of", "csv=p=0", str(reel)], capture_output=True, text=True).stdout.strip()
+    assert dims == "720,1280"
+    tl = j["timelines"]["hi"]
+    cut = tts_dur(reel)
+    assert cut <= 20.5 and any(abs(cut - (s + tl["xfade"] * 0.5)) < 0.15 for s in tl["starts"][1:])  # ends after a whole scene
+
+    # signed links work behind the optional password; tampered/expired ones don't
+    monkeypatch.setattr(config, "APP_PASSWORD", "pw")
+    url = public_urls.file_url(j["id"], j["outputs"]["hi"]["thumbnail"])
+    path_q = url.split("mock.local", 1)[1]
+    assert client.get(path_q).status_code == 200
+    assert client.get(path_q.replace("sig=", "sig=0")).status_code == 401
+    assert client.get(path_q.split("?")[0]).status_code == 401
+
+    # double publish of the same target while running is refused; unknown language 404
+    assert client.post(f"/api/jobs/{j['id']}/publish/xx", json={"targets": ["youtube"]}, auth=("admin", "pw")).status_code == 404
+
+
+def test_youtube_login_keeps_pkce_verifier(tmp_path, monkeypatch):
+    """Regression: Google's OAuth library adds PKCE; the verifier must survive until the callback."""
+    import json as _json
+    from app import youtube
+    secrets_file = tmp_path / "client.json"
+    secrets_file.write_text(_json.dumps({"web": {"client_id": "x.apps.googleusercontent.com", "client_secret": "s",
+                                                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                                                 "token_uri": "https://oauth2.googleapis.com/token",
+                                                 "redirect_uris": ["http://localhost:8000/youtube/oauth2callback"]}}))
+    monkeypatch.setattr(config, "YOUTUBE_CLIENT_SECRETS", secrets_file)
+    url = youtube.auth_url("hi")
+    assert "code_challenge=" in url and "state=hi" in url
+    verifier = (config.SECRETS_DIR / "youtube_pkce_hi.txt").read_text()
+    assert len(verifier) >= 43 and youtube._flow(verifier).code_verifier == verifier
+
+
+def _frame(path, t=1.0):
+    from PIL import Image
+    import io as _io
+    png = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1",
+                          "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True, check=True).stdout
+    return Image.open(_io.BytesIO(png)).convert("RGB")
+
+
+def test_logo_watermark_new_and_existing_videos():
+    import io as _io
+    import numpy as np
+    from PIL import Image, ImageDraw
+    from app import branding
+    # an older video made before any logo existed
+    r = client.post("/api/jobs", json={"mode": "2d", "languages": ["en"], "preset": "twinkle", "target_seconds": 30,
+                                        "lyrics_on_screen": False})
+    old = _wait(r.json()["id"])
+    assert old["status"] == "done" and not old["outputs"]["en"].get("logo")
+
+    # upload a logo: coloured letters with a hole, on white
+    img = Image.new("RGB", (600, 200), "white")
+    d = ImageDraw.Draw(img)
+    d.ellipse((40, 40, 180, 180), fill="#FF7A1A")
+    d.ellipse((85, 85, 135, 135), fill="white")            # letter hole → must become transparent
+    d.rounded_rectangle((260, 40, 560, 170), radius=30, fill="#FFC21A", outline="white", width=6)
+    buf = _io.BytesIO()
+    img.save(buf, "PNG")
+    r = client.post("/api/branding/logo", files={"file": ("logo.png", buf.getvalue(), "image/png")})
+    assert r.status_code == 200 and r.json()["logo"]
+    logo = Image.open(branding.LOGO)
+    a = np.asarray(logo.getchannel("A"))
+    assert a[0, 0] == 0 and (a == 0).mean() > 0.2
+
+    # new videos carry the logo at the bottom
+    r = client.post("/api/jobs", json={"mode": "2d", "languages": ["en"], "preset": "twinkle", "target_seconds": 30})
+    j = _wait(r.json()["id"])
+    o = j["outputs"]["en"]
+    assert o["logo"] and o["video"] != o["video_clean"]
+    dd = config.OUTPUT_DIR / j["id"]
+    branded, clean = np.asarray(_frame(dd / o["video"])).astype(int), np.asarray(_frame(dd / o["video_clean"])).astype(int)
+    h, w, _ = branded.shape
+    corner = np.abs(branded[int(h * 0.88):, int(w * 0.75):] - clean[int(h * 0.88):, int(w * 0.75):]).mean()
+    top = np.abs(branded[: int(h * 0.3)] - clean[: int(h * 0.3)]).mean()
+    assert corner > 10 and top < 3          # logo bottom-right, rest of the picture untouched
+
+    # apply to all existing videos
+    from app import main as m
+    m._jobs.pop(old["id"], None)
+    assert client.post("/api/branding/apply-all").json()["ok"]
+    for _ in range(240):
+        st = client.get("/api/branding/apply-all").json()
+        if not st["running"] and st["done"] >= 1:
+            break
+        time.sleep(1)
+    old2 = client.get(f"/api/jobs/{old['id']}").json()
+    assert old2["outputs"]["en"]["logo"] and old2["outputs"]["en"]["video"].endswith("_branded.mp4")
+    assert old2["cost"]["total_usd"] == 0
+    client.delete("/api/branding/logo")

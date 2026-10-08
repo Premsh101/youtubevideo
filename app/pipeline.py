@@ -8,7 +8,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import align, characters, lyrics_overlay, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
+from . import align, branding, characters, lyrics_overlay, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -281,24 +281,40 @@ class Job:
             "duration": round(total, 1), "language": name, "sync": method,
             **meta, "youtube": None,
         }
-        if self.params.get("lyrics_on_screen", True):
-            self.step(f"Drawing animated {name} lyrics on screen", progress + 0.28)
-            self._set_lyrics(lang, True)
-        self.save()
+        self.state["outputs"][lang]["lyrics_on_screen"] = bool(self.params.get("lyrics_on_screen", True))
+        self.step(f"Adding {name} lyrics & logo", progress + 0.28)
+        self._rebuild_output(lang)
 
-    def _set_lyrics(self, lang: str, on: bool) -> None:
-        """Turn the animated on-screen lyrics on/off for one language. Re-encodes the video only (ffmpeg,
-        no API cost); the clean version is kept so it can be switched back. Works on old videos too."""
+    def _rebuild_output(self, lang: str) -> None:
+        """Final look of one language from its clean video: on-screen lyrics (if on) + logo watermark
+        (if a logo is uploaded). ffmpeg only, no API cost. Works on videos from any older version."""
         o = self.state["outputs"][lang]
         clean = o.get("video_clean") or o["video"]  # old videos: their video is the clean one
         o["video_clean"] = clean
-        if on:
-            out = lyrics_overlay.burn(self.dir / clean, self.dir / o["captions"], lang,
-                                      self.dir / clean.replace(".mp4", "_lyrics.mp4"))
-            o["video"], o["lyrics_on_screen"] = out.name, True
+        lyrics, logo = bool(o.get("lyrics_on_screen")), branding.LOGO if branding.has_logo() else None
+        for stale in self.dir.glob(f"{Path(clean).stem}_*vertical_*.mp4"):  # Shorts/Reels are re-cut on demand
+            stale.unlink()
+        if not lyrics and logo is None:
+            o["video"] = clean
         else:
-            o["video"], o["lyrics_on_screen"] = clean, False
+            out = self.dir / clean.replace(".mp4", "_lyrics.mp4" if lyrics else "_branded.mp4")
+            lyrics_overlay.finalize(self.dir / clean, self.dir / o["captions"] if lyrics else None, lang, logo, out)
+            o["video"] = out.name
+        o["logo"] = logo is not None
         self.save()
+
+    def _set_lyrics(self, lang: str, on: bool) -> None:
+        self.state["outputs"][lang]["lyrics_on_screen"] = on
+        self._rebuild_output(lang)
+
+    def rebrand(self) -> None:
+        """Re-apply the current logo (and lyrics setting) to every language of this video."""
+        def _do():
+            langs = list(self.state.get("outputs") or {})
+            for i, lang in enumerate(langs):
+                self.step(f"Applying logo ({languages.name(lang)})", (i + 0.5) / max(1, len(langs)))
+                self._rebuild_output(lang)
+        self.run(_do)
 
     def set_lyrics(self, langs: list[str], on: bool) -> None:
         def _do():

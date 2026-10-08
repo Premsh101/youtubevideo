@@ -165,3 +165,20 @@ you can download or post to YouTube any time later.
 | Keyframes + sung (ElevenLabs) | ≈ ₹105 |
 | Veo + sung | ≈ ₹1,600 |
 | Re-running the same rhyme/characters | ₹0 for every cached part |
+
+
+## F · Publishing & branding (Sunave Kids)
+
+The click-by-click guide for creating the YouTube channel, Facebook Page and Instagram account,
+the Meta developer app, connecting everything and posting is **inside the app at `/guide`**
+(button 📘 *Setup guide*, top right). It fills in your real domain automatically.
+
+New Coolify environment variables:
+```
+CHANNEL_NAME=Sunave Kids
+PUBLIC_BASE_URL=https://rhymes.yourdomain.com
+META_APP_ID=...
+META_APP_SECRET=...
+META_LOGIN_CONFIG_ID=...
+```
+Logo: 📡 *Publishing accounts* → 🎨 *Logo watermark* → ⬆ *Upload logo* → apply to all existing videos.

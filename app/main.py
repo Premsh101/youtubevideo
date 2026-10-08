@@ -8,13 +8,14 @@ from typing import Literal
 import base64
 import secrets
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import characters, config, costs, elevenlabs, languages, pipeline, presets, script_gen, youtube
+from . import (branding, characters, config, costs, elevenlabs, languages, pipeline, presets, public_urls, publish,
+               script_gen, social, youtube)
 from .costs import CostLedger
 
 app = FastAPI(title="Toddler Rhyme Studio")
@@ -25,6 +26,10 @@ class BasicAuth(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if not config.APP_PASSWORD:
+            return await call_next(request)
+        # Facebook/Instagram fetch videos with a signed, expiring link (no password possible there)
+        if "/files/" in request.url.path and public_urls.is_valid(
+                request.url.path, request.query_params.get("exp"), request.query_params.get("sig")):
             return await call_next(request)
         hdr = request.headers.get("authorization", "")
         ok = False
@@ -61,7 +66,9 @@ def get_config() -> dict:
         "usd_to_inr": config.USD_TO_INR,
         "elevenlabs": elevenlabs.is_configured(),
         "auth": bool(config.APP_PASSWORD),
-        "youtube": {"configured": youtube.is_configured(), "authorised": youtube.is_authorised(),
+        "public_base_url": config.PUBLIC_BASE_URL,
+        "reel_max": config.REEL_MAX_SECONDS,
+        "youtube": {"configured": youtube.is_configured(), "authorised": bool(youtube.channels()),
                     "privacy": config.YOUTUBE_PRIVACY},
     }
 
@@ -238,42 +245,163 @@ def api_delete_job(job_id: str) -> dict:
     return {"ok": True}
 
 
-# -------------------------------------------------------------------- youtube
+# ---------------------------------------------------------------- publishing accounts
+@app.get("/guide", response_class=HTMLResponse)
+def guide() -> str:
+    return (STATIC / "guide.html").read_text(encoding="utf-8")
+
+
+@app.get("/api/branding")
+def api_branding() -> dict:
+    return {"logo": branding.has_logo(), "logo_url": "/api/branding/logo.png" if branding.has_logo() else None,
+            "position": branding.POSITION, "channel_name": config.CHANNEL_NAME}
+
+
+@app.post("/api/branding/logo")
+async def api_upload_logo(file: UploadFile = File(...)) -> dict:
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(413, "Logo file is too large (max 15 MB)")
+    try:
+        branding.save_logo(data)
+    except Exception as exc:  # noqa: BLE001 - bad image
+        raise HTTPException(400, f"Could not read that image: {exc}")
+    return api_branding()
+
+
+@app.get("/api/branding/logo.png")
+def api_logo_png() -> FileResponse:
+    if not branding.has_logo():
+        raise HTTPException(404)
+    return FileResponse(branding.LOGO, headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/branding/logo")
+def api_delete_logo() -> dict:
+    branding.remove_logo()
+    return api_branding()
+
+
+_rebrand_state = {"running": False, "done": 0, "total": 0}
+
+
+@app.post("/api/branding/apply-all")
+def api_apply_logo_all() -> dict:
+    """Re-apply the current logo (or remove it, if none) on every finished video. ffmpeg only."""
+    if _rebrand_state["running"]:
+        raise HTTPException(409, "already applying")
+    ids = [j["id"] for j in pipeline.list_jobs() if j.get("outputs") and j["status"] in ("done", "error", "paused")]
+    ids = [i for i in ids if not (_jobs.get(i) and _jobs[i].state["status"] in ("running", "waiting", "queued"))]
+
+    def _all():
+        _rebrand_state.update(running=True, done=0, total=len(ids))
+        try:
+            for job_id in ids:
+                job = pipeline.Job.load(job_id)
+                _jobs[job_id] = job
+                job.rebrand()
+                _rebrand_state["done"] += 1
+        finally:
+            _rebrand_state["running"] = False
+    threading.Thread(target=_all, daemon=True, name="rebrand-all").start()
+    return {"ok": True, "videos": len(ids)}
+
+
+@app.get("/api/branding/apply-all")
+def api_apply_logo_all_status() -> dict:
+    return _rebrand_state
+
+
+@app.get("/api/social/status")
+def api_social_status() -> dict:
+    return {"youtube": {"configured": youtube.is_configured(), "channels": youtube.channels()},
+            "meta": social.status(), "public_base_url": config.PUBLIC_BASE_URL}
+
+
 @app.get("/youtube/auth")
-def yt_auth() -> RedirectResponse:
+def yt_auth(slot: str = youtube.DEFAULT_SLOT) -> RedirectResponse:
     if not youtube.is_configured():
         raise HTTPException(400, f"Put your OAuth client JSON at {config.YOUTUBE_CLIENT_SECRETS}")
-    return RedirectResponse(youtube.auth_url())
+    if slot != youtube.DEFAULT_SLOT and slot not in languages.LANGUAGES:
+        raise HTTPException(400, "unknown language")
+    return RedirectResponse(youtube.auth_url(slot))
 
 
 @app.get("/youtube/oauth2callback")
-def yt_callback(code: str) -> RedirectResponse:
-    youtube.finish_auth(code)
-    return RedirectResponse("/?youtube=connected")
+def yt_callback(code: str, state: str | None = None) -> RedirectResponse:
+    slot = youtube.finish_auth(code, state)
+    return RedirectResponse(f"/?connected=youtube-{slot}")
+
+
+@app.delete("/api/social/youtube/{slot}")
+def yt_disconnect(slot: str) -> dict:
+    youtube.disconnect(slot)
+    return {"ok": True}
+
+
+@app.get("/meta/auth")
+def meta_auth() -> RedirectResponse:
+    if not social.is_configured():
+        raise HTTPException(400, "Set META_APP_ID and META_APP_SECRET first (see /guide)")
+    return RedirectResponse(social.auth_url())
+
+
+@app.get("/meta/oauth2callback")
+def meta_callback(code: str | None = None, state: str | None = None, error_description: str | None = None):
+    if not code:
+        raise HTTPException(400, error_description or "Meta login was cancelled")
+    social.finish_auth(code, state)
+    return RedirectResponse("/?connected=meta")
+
+
+@app.post("/api/social/meta/page/{page_id}")
+def meta_select_page(page_id: str) -> dict:
+    try:
+        social.select_page(page_id)
+    except KeyError:
+        raise HTTPException(404)
+    return social.status()
+
+
+@app.delete("/api/social/meta")
+def meta_disconnect() -> dict:
+    social.disconnect()
+    return {"ok": True}
 
 
 class PublishIn(BaseModel):
+    targets: list[Literal["youtube", "youtube_short", "facebook", "instagram"]] = ["youtube"]
     privacy: Literal["private", "unlisted", "public"] | None = None
-    title: str | None = None
-    description: str | None = None
+    publish_at: str | None = Field(None, description="YouTube only: RFC3339 time to go public, e.g. 2026-10-10T07:30:00+05:30")
 
 
-@app.post("/api/jobs/{job_id}/youtube/{lang}")
+@app.post("/api/jobs/{job_id}/publish/{lang}")
 def api_publish(job_id: str, lang: str, body: PublishIn) -> dict:
-    j = _jobs[job_id].state if job_id in _jobs else pipeline.load_job(job_id)
-    if not j or lang not in j["outputs"]:
-        raise HTTPException(404)
-    if not youtube.is_authorised():
-        raise HTTPException(401, "Connect YouTube first (/youtube/auth)")
-    o = j["outputs"][lang]
-    d = config.OUTPUT_DIR / job_id
-    hashtags = " ".join(o.get("hashtags") or ["#nurseryrhymes", "#kidssongs", "#toddlers"])
-    desc = (body.description or o["description"]) + "\n\n" + hashtags  # first 3 hashtags show above the title
-    res = youtube.upload(d / o["video"], body.title or o["title"], desc, o["tags"], lang,
-                         thumbnail=d / o["thumbnail"], captions=d / o["captions"], privacy=body.privacy)
-    o["youtube"] = res
-    if job_id in _jobs:
-        _jobs[job_id].save()
-    else:
-        (d / "job.json").write_text(__import__("json").dumps(j, ensure_ascii=False, indent=1))
-    return res
+    """Post one language version to the chosen platforms in the background."""
+    job = _jobs.get(job_id)
+    if job is None:
+        try:
+            job = pipeline.Job.load(job_id)
+        except KeyError:
+            raise HTTPException(404)
+        _jobs[job_id] = job
+    if lang not in (job.state.get("outputs") or {}):
+        raise HTTPException(404, "no such language version")
+    if not body.targets:
+        raise HTTPException(400, "choose at least one platform")
+    if any(t.startswith("youtube") for t in body.targets) and not youtube.slot_for(lang):
+        raise HTTPException(401, "Connect a YouTube channel first")
+    if any(t in ("facebook", "instagram") for t in body.targets):
+        st = social.status()
+        if not st["connected"]:
+            raise HTTPException(401, "Connect Facebook & Instagram first")
+        if "instagram" in body.targets and not st["instagram"]:
+            raise HTTPException(400, "The selected Facebook Page has no linked Instagram Professional account")
+        if not config.PUBLIC_BASE_URL and not config.MOCK_AI:
+            raise HTTPException(400, "Set PUBLIC_BASE_URL (your https app address) in Coolify first")
+    pub = job.state["outputs"][lang].get("published") or {}
+    busy = [t for t in body.targets if (pub.get(t) or {}).get("status") in ("queued", "uploading")]
+    if busy:
+        raise HTTPException(409, f"already publishing: {busy}")
+    publish.start(job, lang, list(body.targets), body.privacy, body.publish_at)
+    return {"ok": True, "targets": body.targets}

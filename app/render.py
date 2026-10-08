@@ -145,6 +145,23 @@ def song_to_track(song: Path, total: float, out: Path) -> Path:
     return out
 
 
+def make_vertical(src: Path, out: Path, duration: float) -> Path:
+    """9:16 version for Reels / Shorts: the full 16:9 frame (with its lyrics) centred over a soft,
+    blurred, slightly brightened copy of itself — nothing is cropped away. Cut to `duration` with a
+    gentle fade so a long rhyme ends cleanly at a scene boundary."""
+    w, h = 720, 1280
+    fade = 1.2
+    vf = (f"[0:v]split[a][b];"
+          f"[a]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=24:2,eq=brightness=0.06:saturation=1.2[bg];"
+          f"[b]scale={w}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2-60,"
+          f"fade=t=out:st={max(0, duration - fade):.3f}:d={fade},format=yuv420p[v];"
+          f"[0:a]afade=t=out:st={max(0, duration - fade):.3f}:d={fade}[au]")
+    _run(FF + ["-i", str(src), "-t", f"{duration:.3f}", "-filter_complex", vf, "-map", "[v]", "-map", "[au]",
+               "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-r", str(config.FPS),
+               "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", str(out)])
+    return out
+
+
 def mux(video: Path, audio: Path, out: Path) -> Path:
     _run(FF + ["-i", str(video), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
                "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(out)])

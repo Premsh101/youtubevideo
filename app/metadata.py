@@ -6,7 +6,7 @@ demoted or removed, which kills reach far more than any keyword gains.
 """
 from __future__ import annotations
 
-from . import languages
+from . import config, languages
 from .costs import CostLedger
 from .gemini_client import generate_json
 
@@ -43,7 +43,7 @@ def viral_metadata(script: dict, lang: str, cast: list[dict], ledger: CostLedger
     lyrics = "\n".join(s.get(key, "") for s in script["scenes"])
     base_title = (script.get("titles") or {}).get(lang) or script.get(f"title_{lang}") or script.get("title_en")
     chars = ", ".join(f"{c['name']} the {c['species']}" for c in cast) or "cute animal friends"
-    prompt = f"""You are a YouTube growth strategist for a toddler (age 1-3) nursery-rhyme channel.
+    prompt = f"""You are a YouTube growth strategist for "{config.CHANNEL_NAME}", a toddler (age 1-3) nursery-rhyme channel.
 Write the metadata for this video in {languages.name(lang)} (native script; add common English/romanised
 search terms too where parents search that way, e.g. Hindi parents also type "hindi rhymes", "balgeet").
 
@@ -54,15 +54,18 @@ Lyrics:
 
 What works for the most-viewed kids videos:
 - TITLE (max 70 chars): rhyme name first (exact name parents search), then a hook, then a broad
-  category phrase, e.g. "Johny Johny Yes Papa 🍭 | Nursery Rhymes & Kids Songs". 1 emoji max. No ALL CAPS.
+  category phrase, then the channel name if it fits, e.g.
+  "Johny Johny Yes Papa 🍭 | Nursery Rhymes & Kids Songs | {config.CHANNEL_NAME}". 1 emoji max. No ALL CAPS.
 - DESCRIPTION: first 2 lines (shown before "more") must contain the rhyme name + "nursery rhymes" /
   "kids songs" equivalents and a warm promise to parents (sing-along, learning, bedtime...).
   Then a blank line, the full lyrics, then a short "What your toddler learns" bullet list (2-4),
-  then a subscribe call to action for parents. 900-1500 characters total.
+  then a subscribe call to action for parents naming the channel "{config.CHANNEL_NAME}"
+  (e.g. "Subscribe to {config.CHANNEL_NAME} for a new rhyme every week!"). 900-1500 characters total.
 - TAGS: 15-25 relevant search phrases, most specific first (rhyme name variants, spellings, the
   language name + "rhymes", "nursery rhymes", "kids songs", "baby songs", "toddler learning",
   the topic), mixed native script + romanised/English. Each tag under 30 characters.
 - HASHTAGS: exactly 3 to 5, no spaces, first 3 are shown above the title (most important first).
+  Include the brand hashtag #{config.CHANNEL_NAME.replace(' ', '')} as the last one.
 Never use other channels' names or brands (e.g. Cocomelon, ChuChu, Pinkfong), never misleading or
 unrelated keywords, no tag lists inside the description — these violate YouTube policy.
 

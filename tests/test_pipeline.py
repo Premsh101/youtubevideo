@@ -17,7 +17,7 @@ client = TestClient(app)
 
 
 def test_estimate_and_scene_count():
-    assert script_gen.scene_count("images", 120) == 10
+    assert script_gen.scene_count("images", 120) == 17
     assert script_gen.scene_count("veo", 120) == 15
     est = costs.estimate(10, "images", ["en", "hi"])
     assert est["total_inr"] > 0

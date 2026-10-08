@@ -44,13 +44,14 @@ video{width:100%;border-radius:12px;background:#000}
 <section>
  <div class="card">
   <h2>1 · What should the rhyme be about?</h2>
-  <div class="seg"><button id="srcAuto" class="on">Let Gemini write it</button><button id="srcOwn">I have a poem</button></div>
-  <div id="autoBox"><label>Topic (optional)</label><input type="text" id="topic" placeholder="e.g. brushing teeth, rainy day, counting ducks"></div>
+  <div class="seg"><button id="srcFamous" class="on">⭐ Famous rhyme</button><button id="srcAuto">Let Gemini write it</button><button id="srcOwn">I have a poem</button></div>
+  <div id="famousBox"><label>Pick a classic (public-domain versions of the most-watched rhymes)</label><select id="preset"></select></div>
+  <div id="autoBox" style="display:none"><label>Topic (optional)</label><input type="text" id="topic" placeholder="e.g. brushing teeth, rainy day, counting ducks"></div>
   <div id="ownBox" style="display:none"><label>Paste your poem / rhyme (English or Hindi)</label><textarea id="poem" placeholder="Johny Johny yes papa..."></textarea></div>
 
   <h2 style="margin-top:18px">2 · Look &amp; feel</h2>
   <label>Animation mode</label>
-  <div class="seg" id="mode"><button data-v="2d" class="on">🎨 2D cartoon</button><button data-v="3d">🧊 3D rendered</button></div>
+  <div class="seg" id="mode"><button data-v="2d">🎨 2D cartoon</button><button data-v="3d" class="on">🧊 3D rendered (like top channels)</button></div>
   <label>Motion engine</label>
   <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
   <label>Output videos (one separate MP4 per language, same visuals)</label>
@@ -78,19 +79,18 @@ video{width:100%;border-radius:12px;background:#000}
 </main>
 <script>
 const $=s=>document.querySelector(s);const api=(u,o)=>fetch(u,o).then(async r=>{if(!r.ok)throw new Error((await r.text())||r.status);return r.json()});
-let cfg={},selected=new Set(),mode='2d',engine='images',current=null,poll=null;
+let cfg={},selected=new Set(),mode='3d',engine='images',src='famous',current=null,poll=null;
 const inr=v=>'₹'+Number(v).toFixed(2);
 
 function seg(id,cb){document.querySelectorAll(id+' button').forEach(b=>b.onclick=()=>{document.querySelectorAll(id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.v)})}
 seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;estimate()});
-$('#srcAuto').onclick=()=>{$('#srcAuto').classList.add('on');$('#srcOwn').classList.remove('on');$('#autoBox').style.display='';$('#ownBox').style.display='none'};
-$('#srcOwn').onclick=()=>{$('#srcOwn').classList.add('on');$('#srcAuto').classList.remove('on');$('#autoBox').style.display='none';$('#ownBox').style.display=''};
+function setSrc(v){src=v;for(const k of ['famous','auto','own']){$('#src'+k[0].toUpperCase()+k.slice(1)).classList.toggle('on',k===v);$('#'+k+'Box').style.display=k===v?'':'none'}}
+$('#srcFamous').onclick=()=>setSrc('famous');$('#srcAuto').onclick=()=>setSrc('auto');$('#srcOwn').onclick=()=>setSrc('own');
 $('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
 ['#langEn','#langHi'].forEach(s=>$(s).onchange=estimate);
 
 function params(){const languages=[];if($('#langEn').checked)languages.push('en');if($('#langHi').checked)languages.push('hi');
- const own=$('#srcOwn').classList.contains('on');
- return{mode,engine,languages,characters:[...selected],topic:own?null:($('#topic').value||null),poem:own?($('#poem').value||null):null,target_seconds:+$('#len').value}}
+ return{mode,engine,languages,characters:[...selected],preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
 
 async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
  $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
@@ -133,6 +133,7 @@ async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='runni
 
 (async()=>{cfg=await api('/api/config');$('#ytstatus').innerHTML=cfg.youtube.authorised?'<span class="badge">YouTube ✓ connected</span>':cfg.youtube.configured?'<a class="small" style="text-decoration:none;color:inherit" href="/youtube/auth">Connect YouTube</a>':'<span class="badge" title="Add data/secrets/youtube_client_secret.json">YouTube not configured</span>';
  if(cfg.mock)$('#ytstatus').innerHTML+=' <span class="badge" style="background:var(--yellow)">MOCK_AI</span>';
+ const ps=await api('/api/presets');$('#preset').innerHTML=ps.map(p=>`<option value="${p.id}">${p.lang==='hi'?'🇮🇳':'🇬🇧'} ${p.title}</option>`).join('');
  await loadChars();estimate();loadJobs()})();
 </script>
 </body>

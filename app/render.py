@@ -33,6 +33,18 @@ def _kenburns_expr(camera: str, frames: int) -> str:
     return f"z='{z_in}':{centre}"
 
 
+def snap_to_bars(durations: list[float], xfade: float, bpm: int) -> list[float]:
+    """Stretch each scene so every lyric starts on a music bar (like a sung rhyme, not narration)."""
+    bar = 60.0 / bpm * 4
+    out, t = [], 0.0
+    for d in durations:
+        end = t + d - xfade
+        snapped = (int(end / bar) + 1) * bar
+        out.append(snapped - t + xfade)
+        t = snapped
+    return out
+
+
 def image_to_clip(image: Path, duration: float, camera: str, out: Path) -> Path:
     frames = int(round(duration * config.FPS))
     vf = (
@@ -92,7 +104,15 @@ def build_audio(voice_lines: list[dict], starts: list[float], total: float, musi
     for i, v in enumerate(voice_lines):
         inputs += ["-i", v["path"]]
         ms = int((starts[i] + lead_in) * 1000)
-        delays.append(f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={ms}|{ms}[d{i}]")
+        if v.get("chorus"):
+            # cheap "children singing along" effect: two detuned copies (+3 / +5 semitones) under the lead
+            delays.append(
+                f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,asplit=3[l{i}][h1{i}][h2{i}];"
+                f"[h1{i}]asetrate=48000*1.189,aresample=48000,atempo=1/1.189,volume=-7dB,adelay=35|35[hh1{i}];"
+                f"[h2{i}]asetrate=48000*1.335,aresample=48000,atempo=1/1.335,volume=-10dB,adelay=60|60[hh2{i}];"
+                f"[l{i}][hh1{i}][hh2{i}]amix=inputs=3:normalize=0,adelay={ms}|{ms}[d{i}]")
+        else:
+            delays.append(f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={ms}|{ms}[d{i}]")
     n = len(voice_lines)
     voice_mix = "".join(f"[d{i}]" for i in range(n)) + f"amix=inputs={n}:normalize=0,alimiter=limit=0.95[voice]"
     duck = toddler.MUSIC["duck_db"]
@@ -132,5 +152,5 @@ def thumbnail(video: Path, out: Path, at: float = 3.0) -> Path:
     return out
 
 
-__all__ = ["image_to_clip", "fit_clip", "crossfade_concat", "build_audio", "mux", "write_srt",
+__all__ = ["snap_to_bars", "image_to_clip", "fit_clip", "crossfade_concat", "build_audio", "mux", "write_srt",
            "thumbnail", "media_duration"]

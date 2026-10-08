@@ -10,13 +10,13 @@ from . import config, toddler
 from .costs import CostLedger
 from .gemini_client import generate_json
 
-SECONDS_PER_SCENE_IMAGES = 12   # keyframe engine: ~12 s per scene feels calm for toddlers
+SECONDS_PER_SCENE_IMAGES = 7    # top channels change picture every ~5-8 s; slower than that loses toddlers
 SECONDS_PER_SCENE_VEO = config.VEO_CLIP_SECONDS
 
 
 def scene_count(engine: str, target_seconds: int) -> int:
     per = SECONDS_PER_SCENE_VEO if engine == "veo" else SECONDS_PER_SCENE_IMAGES
-    return max(6, min(16, round(target_seconds / per)))
+    return max(6, min(24, round(target_seconds / per)))
 
 
 def build_prompt(topic: str | None, user_poem: str | None, characters: list[dict],
@@ -35,8 +35,10 @@ def build_prompt(topic: str | None, user_poem: str | None, characters: list[dict
 Characters that MUST appear (same look in every scene):
 {char_lines}
 
-Toddler rules: very simple words, repetition, 4-8 words per line, sing-song rhythm, a happy
-calm ending. Hindi must be natural spoken Hindi in Devanagari (not a literal translation);
+Toddler rules (this is what the most-watched channels do): very simple words, LOTS of repetition,
+4-8 words per line, strong sing-song rhythm, onomatopoeia and actions (clap, splash, beep, quack),
+a short catchy HOOK line that repeats as a chorus at least 3 times across the video, and a happy
+calm ending. Mark chorus lines with "is_chorus": true (hook must be word-for-word identical each time). Hindi must be natural spoken Hindi in Devanagari (not a literal translation);
 both versions must match the same scene meaning. No scary, sad or violent content.
 
 Produce exactly {n_scenes} scenes. Each scene = one lyric line (EN + HI) + one picture.
@@ -52,7 +54,7 @@ Return JSON:
  "title_en": str, "title_hi": str,
  "description_en": str (2 sentences), "description_hi": str,
  "tags": [8 short tags, mixed EN/HI],
- "scenes": [{{"index": 0, "line_en": str, "line_hi": str, "visual": str, "camera": str, "mood_colour": str}}]
+ "scenes": [{{"index": 0, "line_en": str, "line_hi": str, "is_chorus": bool, "visual": str, "camera": str, "mood_colour": str}}]
 }}"""
 
 
@@ -68,6 +70,7 @@ def generate_script(topic: str | None, user_poem: str | None, characters: list[d
         s["index"] = i
         s.setdefault("camera", ["slow zoom in", "gentle pan right", "slow zoom out", "gentle pan left"][i % 4])
         s.setdefault("mood_colour", "sky blue")
+        s["is_chorus"] = bool(s.get("is_chorus"))
     data["scenes"] = scenes
     data["mode"] = mode
     data["engine"] = engine

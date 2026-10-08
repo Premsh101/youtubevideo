@@ -1,0 +1,19 @@
+# Coolify: "Docker Compose" resource → point at this repo. Set the env vars in Coolify's UI,
+# upload the Vertex SA JSON as a file mount (or paste it into VERTEX_SA_JSON).
+services:
+  studio:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - VERTEX_SA_JSON=${VERTEX_SA_JSON}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
+      - USD_TO_INR=${USD_TO_INR:-84}
+      - YOUTUBE_REDIRECT_URI=${YOUTUBE_REDIRECT_URI:-https://rhymes.example.com/youtube/oauth2callback}
+      - YOUTUBE_PRIVACY=${YOUTUBE_PRIVACY:-private}
+      - MOCK_AI=${MOCK_AI:-0}
+    volumes:
+      - studio_data:/srv/data      # characters, cache, finished videos, YouTube token
+    restart: unless-stopped
+volumes:
+  studio_data:

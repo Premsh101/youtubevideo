@@ -35,16 +35,19 @@ def media_duration(path: Path) -> float:
     return float(json.loads(out)["format"]["duration"])
 
 
-def _ssml(text: str) -> str:
+def _ssml(text: str, chorus: bool = False) -> str:
+    """Sing-song delivery: chorus lines brighter/higher like a sung hook, verses a bit slower."""
     v = toddler.VOICE
     safe = text.replace("&", "&amp;").replace("<", "&lt;")
-    return (f'<speak><prosody rate="{int(v["speaking_rate"] * 100)}%" pitch="+{v["pitch_semitones"]}st">'
+    pitch = v["pitch_semitones"] + (2.0 if chorus else 0.0)
+    rate = v["speaking_rate"] + (0.06 if chorus else 0.0)
+    return (f'<speak><prosody rate="{int(rate * 100)}%" pitch="+{pitch:.1f}st">'
             f'{safe}</prosody></speak>')
 
 
-def synthesize_line(text: str, lang: str, ledger: CostLedger) -> Path:
+def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = False) -> Path:
     voice = config.TTS_VOICES[lang]
-    key = hashlib.sha256(f"{voice}|{json.dumps(toddler.VOICE, sort_keys=True)}|{text}".encode()).hexdigest()[:24]
+    key = hashlib.sha256(f"{voice}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}".encode()).hexdigest()[:24]
     out = config.CACHE_DIR / "tts" / f"{key}.wav"
     if out.exists():
         ledger.tts(f"{lang} line", len(text), cached=True)
@@ -58,7 +61,7 @@ def synthesize_line(text: str, lang: str, ledger: CostLedger) -> Path:
 
     from google.cloud import texttospeech as t
     resp = _client().synthesize_speech(
-        input=t.SynthesisInput(ssml=_ssml(text)),
+        input=t.SynthesisInput(ssml=_ssml(text, chorus)),
         voice=t.VoiceSelectionParams(language_code=config.TTS_LANG_CODES[lang], name=voice),
         audio_config=t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000),
     )
@@ -91,6 +94,6 @@ def synthesize_scenes(scenes: list[dict], lang: str, ledger: CostLedger) -> list
     key = "line_en" if lang == "en" else "line_hi"
     out = []
     for s in scenes:
-        p = synthesize_line(s[key], lang, ledger)
-        out.append({"path": str(p), "duration": media_duration(p), "text": s[key]})
+        p = synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus")))
+        out.append({"path": str(p), "duration": media_duration(p), "text": s[key], "chorus": bool(s.get("is_chorus"))})
     return out

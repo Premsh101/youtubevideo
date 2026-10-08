@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import characters, config, costs, pipeline, script_gen, youtube
+from . import characters, config, costs, pipeline, presets, script_gen, youtube
 from .costs import CostLedger
 
 app = FastAPI(title="Toddler Rhyme Studio")
@@ -71,6 +71,11 @@ def api_delete_character(cid: str) -> dict:
     return {"ok": True}
 
 
+@app.get("/api/presets")
+def api_presets() -> list[dict]:
+    return [{"id": p["id"], "title": p["title"], "lang": p["lang"]} for p in presets.PRESETS]
+
+
 # ----------------------------------------------------------------------- jobs
 class JobIn(BaseModel):
     mode: Literal["2d", "3d"]
@@ -79,6 +84,7 @@ class JobIn(BaseModel):
     characters: list[str] = Field([], description="Optional: pin library characters; empty = Gemini casts")
     topic: str | None = None
     poem: str | None = None
+    preset: str | None = None
     target_seconds: int = Field(config.TARGET_SECONDS, ge=30, le=240)
 
 

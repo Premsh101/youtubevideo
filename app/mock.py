@@ -57,6 +57,7 @@ def mock_json(prompt: str) -> dict:
             "index": i,
             "line_en": en,
             "line_hi": hi,
+            "is_chorus": i in (0, 7),
             "visual": f"The character looks up at a {['big', 'tiny', 'golden', 'smiling'][i % 4]} star over a soft blue night meadow, scene {i + 1}",
             "camera": ["slow zoom in", "gentle pan right", "slow zoom out", "gentle pan left"][i % 4],
             "mood_colour": ["sky blue", "soft purple", "sunshine yellow", "candy pink"][i % 4],

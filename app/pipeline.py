@@ -8,14 +8,14 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import characters, config, render, script_gen, toddler, tts
+from . import characters, config, presets, render, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
 
 LEAD_IN = 0.6       # silence before each line
-TAIL = 1.3          # breathing room after each line (toddlers need the pause)
-MIN_SCENE_SEC = 7.0
+TAIL = 0.9          # breathing room after each line
+MIN_SCENE_SEC = 5.0
 
 
 class Job:
@@ -59,6 +59,11 @@ class Job:
         mode = p.get("mode", "2d")
         engine = p.get("engine", "images")
         langs = p.get("languages") or ["en", "hi"]
+        if p.get("preset"):  # famous public-domain rhyme chosen in the UI
+            pr = presets.get(p["preset"])
+            if pr:
+                p["poem"] = p.get("poem") or pr.get("poem")
+                p["topic"] = p.get("topic") or pr.get("topic") or pr["title"]
         # 1. casting: Gemini reuses library characters that fit, invents new ones only if needed.
         #    Sheets are generated once per character and reused forever.
         if p.get("characters"):
@@ -118,6 +123,8 @@ class Job:
         for i in range(len(scenes)):
             need = max(v[i]["duration"] for v in voices.values()) + LEAD_IN + TAIL + config.CROSSFADE_SEC
             durations.append(max(min_len, need))
+        if engine != "veo":  # Veo clips are a fixed 8 s; keyframe scenes can follow the beat
+            durations = render.snap_to_bars(durations, config.CROSSFADE_SEC, toddler.MUSIC["bpm"])
 
         # 5. motion: Ken-Burns clips, or Veo clips chained first→last frame
         clips: list[Path] = []

@@ -90,11 +90,23 @@ def _mock_voice(text: str, out: Path) -> None:
         wf.writeframes(bytes(frames))
 
 
+def trimmed(path: Path) -> Path:
+    """Strip the silence TTS adds before/after speech, so a line starts exactly where we place it."""
+    out = path.with_suffix(".trim.wav")
+    if not out.exists():
+        sil = "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.03"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-af",
+                        f"{sil},areverse,{sil},areverse", str(out)], check=True)
+        if media_duration(out) < 0.2:  # never trim a line away entirely
+            out.write_bytes(path.read_bytes())
+    return out
+
+
 def synthesize_scenes(scenes: list[dict], lang: str, ledger: CostLedger) -> list[dict]:
     """Return [{path, duration}] aligned with scenes."""
     key = f"line_{lang}"
     out = []
     for s in scenes:
-        p = synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus")))
+        p = trimmed(synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus"))))
         out.append({"path": str(p), "duration": media_duration(p), "text": s[key], "chorus": bool(s.get("is_chorus"))})
     return out

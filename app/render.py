@@ -67,6 +67,14 @@ def fit_clip(clip: Path, duration: float, out: Path) -> Path:
 
 
 # ------------------------------------------------------------------ joining
+def scene_starts(durations: list[float], xfade: float) -> list[float]:
+    """Where each scene begins (its cross-fade starts) in the joined video."""
+    starts = [0.0]
+    for d in durations[:-1]:
+        starts.append(starts[-1] + d - xfade)
+    return starts
+
+
 def crossfade_concat(clips: list[Path], durations: list[float], xfade: float, out: Path) -> list[float]:
     """Join clips with xfade. Returns the start time of each scene in the final timeline."""
     n = len(clips)
@@ -134,13 +142,6 @@ def song_to_track(song: Path, total: float, out: Path) -> Path:
                f"aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=duration={total:.3f},"
                f"afade=t=out:st={max(0, total - 2.5):.3f}:d=2.5,loudnorm=I=-16:TP=-1.5:LRA=11",
                "-ar", "48000", str(out)])
-    return out
-
-
-def speed_up(path: Path, factor: float, out: Path) -> Path:
-    """Tempo-change without pitch shift so a longer translation fits an existing scene."""
-    factor = max(1.0, min(1.35, factor))
-    _run(FF + ["-i", str(path), "-af", f"atempo={factor:.3f}", str(out)])
     return out
 
 

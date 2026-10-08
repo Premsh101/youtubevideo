@@ -8,12 +8,11 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import characters, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
+from . import align, characters, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
 
-LEAD_IN = 0.6       # silence before each line
 TAIL = 0.9          # breathing room after each line
 MIN_SCENE_SEC = 5.0
 
@@ -167,60 +166,22 @@ class Job:
             keyframes.append(dest)
         self.save()
 
-        # 4. vocals per language → scene durations
-        voices: dict[str, list[dict]] = {}
-        songs: dict[str, Path] = {}
-        min_len = float(config.VEO_CLIP_SECONDS) if engine == "veo" else MIN_SCENE_SEC
-        if vocals == "sung":
-            # fixed, bar-aligned scene lengths; the song is composed to that plan
-            per = max(min_len, int(p.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
-            durations = render.snap_to_bars([per] * len(scenes), config.CROSSFADE_SEC if engine != "veo" else 0.4,
-                                            toddler.MUSIC["bpm"])
-            for li, lang in enumerate(langs):
-                self.step(f"Composing the {lang.upper()} song with ElevenLabs", 0.47 + 0.06 * li)
-                songs[lang], voices[lang] = self._sung(lang, durations)
-        else:
-            for li, lang in enumerate(langs):
-                self.step(f"Recording {lang.upper()} narration", 0.47 + 0.06 * li)
-                voices[lang] = tts.synthesize_scenes(scenes, lang, self.ledger)
-            durations = []
-            for i in range(len(scenes)):
-                need = max(v[i]["duration"] for v in voices.values()) + LEAD_IN + TAIL + config.CROSSFADE_SEC
-                durations.append(max(min_len, need))
-            if engine != "veo":  # Veo clips are a fixed 8 s; keyframe scenes can follow the beat
-                durations = render.snap_to_bars(durations, config.CROSSFADE_SEC, toddler.MUSIC["bpm"])
-
-        # 5. motion: Ken-Burns clips, or Veo clips chained first→last frame
-        clips: list[Path] = []
-        for i, s in enumerate(scenes):
-            self.step(f"Animating scene {i + 1}/{len(scenes)}", 0.6 + 0.2 * i / len(scenes))
-            clip = self.dir / f"clip_{i:02}.mp4"
-            if engine == "veo":
+        # 4. motion source per scene (Veo clips are generated once and re-timed per language)
+        if engine == "veo":
+            raw = []
+            for i, s in enumerate(scenes):
+                self.step(f"Animating scene {i + 1}/{len(scenes)} with Veo", 0.45 + 0.15 * i / len(scenes))
                 motion = (f"{style}. {s['visual']}. Camera: {s.get('camera', 'slow zoom in')}. "
                           "Very slow, gentle, smooth motion; characters move softly; no cuts.")
-                raw = generate_video_clip(motion, keyframes[i], keyframes[i + 1], self.ledger, f"veo scene {i + 1}")
-                render.fit_clip(raw, durations[i], clip)
-            else:
-                render.image_to_clip(keyframes[i], durations[i], s.get("camera", "slow zoom in"), clip)
-            clips.append(clip)
-
-        # 6. join visuals once
-        self.step("Blending scenes together", 0.82)
-        silent = self.dir / "video_silent.mp4"
-        xf = 0.4 if engine == "veo" else config.CROSSFADE_SEC
-        starts = render.crossfade_concat(clips, durations, xf, silent)
-        total = starts[-1] + durations[-1]
-        # the timeline is what lets any language be added later on top of the same visuals
-        self.state["timeline"] = {"durations": durations, "starts": starts, "total": total, "xfade": xf}
+                raw.append(str(generate_video_clip(motion, keyframes[i], keyframes[i + 1], self.ledger,
+                                                   f"veo scene {i + 1}")))
+            self.state["veo_clips"] = raw
         self.state["keyframes"] = [k.name for k in keyframes]
-        for c in clips:
-            c.unlink(missing_ok=True)
         self.save()
 
-        # 7. per-language audio + mux + captions + thumbnail + viral metadata
+        # 5. each language: audio first, then the pictures are cut to where that audio's lines really are
         for li, lang in enumerate(langs):
-            self.step(f"Mixing {languages.name(lang)} audio", 0.86 + 0.06 * li)
-            self._finish_language(lang, voices[lang], songs.get(lang))
+            self._produce_language(lang, 0.6 + 0.38 * li / len(langs))
 
     # ------------------------------------------------------------ languages
     def _ensure_lyrics(self, lang: str) -> None:
@@ -233,57 +194,107 @@ class Job:
             s[key] = line
         self.save()
 
-    def _sung(self, lang: str, durations: list[float]) -> tuple[Path, list[dict]]:
-        scenes = self.state["script"]["scenes"]
-        song = elevenlabs.compose(scenes, durations, lang, self.params.get("mode", "2d"), self.ledger)
-        voices = [{"path": None, "duration": d - 1.0, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus"))}
-                  for s, d in zip(scenes, durations)]
-        return song, voices
+    def _xfade(self) -> float:
+        return 0.4 if self.params.get("engine") == "veo" else config.CROSSFADE_SEC
 
-    def _finish_language(self, lang: str, voices: list[dict], song: Path | None) -> None:
-        tl = self.state["timeline"]
-        starts, total = tl["starts"], tl["total"]
-        silent = self.dir / "video_silent.mp4"
+    def _voice_lead(self) -> float:
+        """Line starts when the cross-fade is ~60 % done: the new picture is clearly on screen,
+        but there is no visible gap before the voice (that gap read as 'video first, audio late')."""
+        return round(self._xfade() * 0.6, 3)
+
+    def _timeline_spoken(self, voices: list[dict]) -> tuple[list[float], list[float], float]:
+        xf, lead = self._xfade(), self._voice_lead()
+        min_len = float(config.VEO_CLIP_SECONDS) if self.params.get("engine") == "veo" else MIN_SCENE_SEC
+        durations = [max(min_len, lead + v["duration"] + TAIL + xf) for v in voices]
+        if self.params.get("engine") != "veo":  # follow the music's bars
+            durations = render.snap_to_bars(durations, xf, toddler.MUSIC["bpm"])
+        starts = render.scene_starts(durations, xf)
+        return durations, starts, starts[-1] + durations[-1]
+
+    def _timeline_sung(self, lang: str, song: Path, planned_durations: list[float]) -> tuple[list[float], list[float], float, list[float], str]:
+        xf, lead = self._xfade(), self._voice_lead()
+        total = tts.media_duration(song)
+        planned_starts = [t + 0.4 for t in render.scene_starts(planned_durations, xf)]
+        lines = [s[f"line_{lang}"] for s in self.state["script"]["scenes"]]
+        line_t, method = align.line_starts(song, lines, total, planned_starts, self.ledger)
+        # scene i begins `lead` before its line is sung; scene 0 always starts at 0
+        bounds = [0.0] + [max(0.0, t - lead) for t in line_t[1:]]
+        durations = [b2 - b1 + xf for b1, b2 in zip(bounds, bounds[1:])] + [total - bounds[-1]]
+        if min(durations) < xf + 0.8:  # alignment produced a degenerate scene: fall back to the plan
+            bounds = [0.0] + [max(0.0, t - lead) for t in planned_starts[1:]]
+            durations = [b2 - b1 + xf for b1, b2 in zip(bounds, bounds[1:])] + [max(xf + 1, total - bounds[-1])]
+            line_t, method = planned_starts, "plan"
+        starts = render.scene_starts(durations, xf)
+        return durations, starts, starts[-1] + durations[-1], line_t, method
+
+    def _render_visuals(self, lang: str, durations: list[float]) -> Path:
+        """Re-time the (already paid for) keyframes / Veo clips to this language's audio. ffmpeg only."""
+        scenes = self.state["script"]["scenes"]
+        clips: list[Path] = []
+        for i, s in enumerate(scenes):
+            clip = self.dir / f"clip_{lang}_{i:02}.mp4"
+            if self.params.get("engine") == "veo":
+                render.fit_clip(Path(self.state["veo_clips"][i]), durations[i], clip)
+            else:
+                render.image_to_clip(self.dir / self.state["keyframes"][i], durations[i],
+                                     s.get("camera", "slow zoom in"), clip)
+            clips.append(clip)
+        silent = self.dir / f"video_silent_{lang}.mp4"
+        render.crossfade_concat(clips, durations, self._xfade(), silent)
+        for c in clips:
+            c.unlink(missing_ok=True)
+        return silent
+
+    def _produce_language(self, lang: str, progress: float) -> None:
+        self._ensure_lyrics(lang)
+        name = languages.name(lang)
+        scenes = self.state["script"]["scenes"]
+        lead = self._voice_lead()
+        if self.params.get("vocals") == "sung":
+            self.step(f"Composing the {name} song", progress)
+            per = max(MIN_SCENE_SEC, int(self.params.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
+            planned = render.snap_to_bars([per] * len(scenes), self._xfade(), toddler.MUSIC["bpm"])
+            song = elevenlabs.compose(scenes, planned, lang, self.params.get("mode", "2d"), self.ledger)
+            self.step(f"Finding where each {name} line is sung", progress + 0.05)
+            durations, starts, total, line_t, method = self._timeline_sung(lang, song, planned)
+            voices = [{"path": None, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus")),
+                       "duration": max(0.8, (line_t[i + 1] if i + 1 < len(line_t) else total) - line_t[i] - 0.3)}
+                      for i, s in enumerate(scenes)]
+        else:
+            self.step(f"Recording {name} narration", progress)
+            voices = tts.synthesize_scenes(scenes, lang, self.ledger)
+            durations, starts, total = self._timeline_spoken(voices)
+            song, method = None, "exact"
+        self.state.setdefault("timelines", {})[lang] = {
+            "durations": durations, "starts": starts, "total": total, "xfade": self._xfade(),
+            "voice_lead": lead, "sync": method}
+        self.step(f"Cutting the pictures to the {name} audio", progress + 0.1)
+        silent = self._render_visuals(lang, durations)
+        self.step(f"Mixing {name} audio", progress + 0.2)
         if song is not None:
             audio = render.song_to_track(song, total, self.dir / f"audio_{lang}.wav")
         else:
-            music = get_music(total, self.state["script"]["title_en"])  # same seed → same music in every language
-            audio = render.build_audio(voices, starts, total, music, self.dir / f"audio_{lang}.wav", LEAD_IN)
+            music = get_music(total, self.state["script"]["title_en"])
+            audio = render.build_audio(voices, starts, total, music, self.dir / f"audio_{lang}.wav", lead)
         final = render.mux(silent, audio, self.dir / f"final_{lang}.mp4")
-        srt = render.write_srt(voices, starts, self.dir / f"captions_{lang}.srt", LEAD_IN)
+        silent.unlink(missing_ok=True)
+        srt = render.write_srt(voices, starts, self.dir / f"captions_{lang}.srt", lead)
         thumb = render.thumbnail(final, self.dir / f"thumb_{lang}.jpg", at=min(3.0, total / 2))
-        self.step(f"Writing {languages.name(lang)} title, description & hashtags", self.state["progress"])
+        self.step(f"Writing {name} title, description & hashtags", progress + 0.25)
         meta = metadata.viral_metadata(self.state["script"], lang, self.state.get("cast") or [], self.ledger)
         self.state["outputs"][lang] = {
             "video": final.name, "captions": srt.name, "thumbnail": thumb.name,
-            "duration": round(total, 1), "language": languages.name(lang),
+            "duration": round(total, 1), "language": name, "sync": method,
             **meta, "youtube": None,
         }
         self.save()
 
     def _add_language(self, lang: str) -> None:
-        """New language on an existing video: only lyrics, voice and metadata are generated."""
-        if not self.state.get("timeline") or not (self.dir / "video_silent.mp4").exists():
+        """New language on an existing video: only lyrics, voice and metadata cost money;
+        the existing keyframes / Veo clips are re-timed to the new audio."""
+        if not self.state.get("keyframes") or not self.state.get("timelines"):
             raise RuntimeError("This video was made before multi-language support; re-create it once to add languages.")
-        self.step(f"Adding {languages.name(lang)} using the existing visuals", 0.1)
-        self._ensure_lyrics(lang)
-        durations = self.state["timeline"]["durations"]
-        if self.params.get("vocals") == "sung":
-            self.step(f"Composing the {languages.name(lang)} song", 0.4)
-            song, voices = self._sung(lang, durations)
-        else:
-            self.step(f"Recording {languages.name(lang)} narration", 0.4)
-            song = None
-            voices = tts.synthesize_scenes(self.state["script"]["scenes"], lang, self.ledger)
-            # the pictures are already timed; squeeze (max 1.35x) any line that runs longer than its scene
-            for i, v in enumerate(voices):
-                slot = durations[i] - LEAD_IN - self.state["timeline"]["xfade"] - 0.3
-                if v["duration"] > slot:
-                    fitted = self.dir / f"voice_{lang}_{i:02}.wav"
-                    v["path"] = str(render.speed_up(Path(v["path"]), v["duration"] / slot, fitted))
-                    v["duration"] = tts.media_duration(fitted)
-        self.step(f"Mixing {languages.name(lang)} audio", 0.8)
-        self._finish_language(lang, voices, song)
+        self._produce_language(lang, 0.1)
         langs = self.params.setdefault("languages", [])
         if lang not in langs:
             langs.append(lang)

@@ -31,6 +31,11 @@ Budget 45–60 minutes the first time.
 2. Click your avatar (bottom-left) → **API Keys → Create API key** → copy it → this is
    `ELEVENLABS_API_KEY`. Skip this part entirely to use only Google TTS (spoken rhymes).
 
+**Key permissions:** give the key **Access** to *Music Generation* **and** *Forced Alignment*
+(plus *User*). Forced Alignment measures exactly where each sung line starts so the pictures change
+in time with the singing; without it the app falls back to Gemini listening to the song (slightly
+less precise). If you already created the key: ElevenLabs → Developers → API Keys → ⋯ → Edit.
+
 ## C · YouTube — OAuth client (≈5 min)
 
 1. In the same GCP project: **APIs & Services → OAuth consent screen** → *External* → fill

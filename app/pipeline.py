@@ -8,7 +8,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import align, characters, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
+from . import align, characters, lyrics_overlay, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -276,11 +276,37 @@ class Job:
         self.step(f"Writing {name} title, description & hashtags", progress + 0.25)
         meta = metadata.viral_metadata(self.state["script"], lang, self.state.get("cast") or [], self.ledger)
         self.state["outputs"][lang] = {
-            "video": final.name, "captions": srt.name, "thumbnail": thumb.name,
+            "video": final.name, "video_clean": final.name, "lyrics_on_screen": False,
+            "captions": srt.name, "thumbnail": thumb.name,
             "duration": round(total, 1), "language": name, "sync": method,
             **meta, "youtube": None,
         }
+        if self.params.get("lyrics_on_screen", True):
+            self.step(f"Drawing animated {name} lyrics on screen", progress + 0.28)
+            self._set_lyrics(lang, True)
         self.save()
+
+    def _set_lyrics(self, lang: str, on: bool) -> None:
+        """Turn the animated on-screen lyrics on/off for one language. Re-encodes the video only (ffmpeg,
+        no API cost); the clean version is kept so it can be switched back. Works on old videos too."""
+        o = self.state["outputs"][lang]
+        clean = o.get("video_clean") or o["video"]  # old videos: their video is the clean one
+        o["video_clean"] = clean
+        if on:
+            out = lyrics_overlay.burn(self.dir / clean, self.dir / o["captions"], lang,
+                                      self.dir / clean.replace(".mp4", "_lyrics.mp4"))
+            o["video"], o["lyrics_on_screen"] = out.name, True
+        else:
+            o["video"], o["lyrics_on_screen"] = clean, False
+        self.save()
+
+    def set_lyrics(self, langs: list[str], on: bool) -> None:
+        def _do():
+            for i, lang in enumerate(langs):
+                self.step(f"{'Adding' if on else 'Removing'} on-screen lyrics ({languages.name(lang)})",
+                          (i + 0.5) / len(langs))
+                self._set_lyrics(lang, on)
+        self.run(_do)
 
     def _veo_clips(self) -> None:
         """Veo clip per scene. Same prompt + same keyframes → content-hash cache hit, so calling this

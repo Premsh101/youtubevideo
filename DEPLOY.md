@@ -104,6 +104,10 @@ The page is one screen: left column = settings 1-2-3, right column = progress / 
   produces its own MP4 with the same visuals.
 - *Target length* slider: 60–180 s (default 120).
 
+**🔤 Show animated lyrics on screen** (ticked by default): big rounded bubble letters at the bottom,
+a different candy colour per line; each line pops in and every word lights up yellow with a little
+hop exactly while it's sung. Works for Hindi, Tamil, Urdu, etc. (fonts are bundled in the image).
+
 **3 · Characters** — choose one:
 - `✨ Let Gemini create` (default): Gemini picks characters that fit the rhyme, reusing library ones
   where possible and inventing new ones only if needed (saved to the library).
@@ -131,6 +135,10 @@ Each language also gets **YouTube text written for discovery**: a search-first t
 whose first two lines carry the keywords, lyrics and a parent call-to-action, 15–25 tags (≤500 chars)
 and 3–5 hashtags (first 3 appear above the title). Open *Description & tags* to read or 📋 copy them;
 `📤 Post to YouTube` uses them automatically.
+
+**🔤 Add / 🚫 Remove on-screen lyrics** (per language, on any video — old ones too): re-draws only
+the text, no AI cost, about a minute. The clean version is kept. If that language is already on
+YouTube, post it again to get the new version there.
 
 **➕ Add another language** (under the players): pick e.g. German → *Create*. Only the lyrics,
 voice and YouTube text are generated; the pictures are reused, so it costs a few rupees and ~1 min.

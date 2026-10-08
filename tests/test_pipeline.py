@@ -165,3 +165,30 @@ def test_spoken_sync_math():
         for i in range(len(tl["starts"]) - 1):
             # next scene starts no earlier than this scene's line + lead
             assert tl["starts"][i + 1] - tl["starts"][i] >= tl["voice_lead"] + 0.5
+
+
+def test_add_language_to_old_video_reuses_everything():
+    """A Hindi-only video made by an older version (no keyframe list / timelines saved) can get
+    an English version: no images, no lyrics call (English lyrics already exist) — only voice + text."""
+    r = client.post("/api/jobs", json={"mode": "3d", "languages": ["hi"], "preset": "twinkle", "target_seconds": 60})
+    j = _wait(r.json()["id"])
+    assert j["status"] == "done", j.get("error")
+    f = config.OUTPUT_DIR / j["id"] / "job.json"
+    old = __import__("json").loads(f.read_text())
+    for k in ("keyframes", "timelines", "veo_clips"):
+        old.pop(k, None)
+    f.write_text(__import__("json").dumps(old))
+    from app import main as m
+    m._jobs.pop(j["id"], None)
+
+    assert client.post(f"/api/jobs/{j['id']}/languages/en").json()["ok"]
+    time.sleep(1)
+    j2 = _wait(j["id"])
+    assert j2["status"] == "done", j2.get("error")
+    assert set(j2["outputs"]) == {"hi", "en"}
+    items = j2["cost"]["items"]
+    assert not any(i["kind"] == "image" and not i["cached"] for i in items)   # pictures reused
+    assert not any(i["detail"] == "lyrics en" for i in items)                # lyrics already existed
+    assert any(i["kind"] == "tts" for i in items)                            # only the new voice
+    en = config.OUTPUT_DIR / j["id"] / j2["outputs"]["en"]["video"]
+    assert abs(tts_dur(en) - j2["timelines"]["en"]["total"]) < 0.3

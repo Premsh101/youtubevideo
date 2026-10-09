@@ -54,7 +54,8 @@ video{width:100%;border-radius:12px;background:#000}
   <label>Animation mode</label>
   <div class="seg" id="mode"><button data-v="2d">🎨 2D cartoon</button><button data-v="3d" class="on">🧊 3D rendered (like top channels)</button></div>
   <label>Motion engine</label>
-  <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
+  <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="cutout">🎭 Animated cut-outs (new): characters hop to the beat</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
+  <div class="est" id="engineHint" style="margin:4px 0 0"></div>
   <label>Vocals</label>
   <div class="seg" id="vocals"><button data-v="tts" class="on">🗣 Spoken rhyme (Google TTS, ~₹3)</button><button data-v="sung">🎤 Sung song (ElevenLabs, ~₹35/lang)</button></div>
   <label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:12px"><input type="checkbox" id="lyricsOn" checked> 🔤 Show animated lyrics on screen <span class="est" style="margin:0">(big bouncy words that light up as they're sung)</span></label>
@@ -91,7 +92,7 @@ let cfg={},selected=new Set(),mode='3d',engine='images',vocals='tts',src='famous
 const inr=v=>'₹'+Number(v).toFixed(2);
 
 function seg(id,cb){document.querySelectorAll(id+' button').forEach(b=>b.onclick=()=>{document.querySelectorAll(id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.v)})}
-seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;estimate()});seg('#charMode',v=>{charMode=v;for(const k of ['auto','library','describe'])$('#cm'+k[0].toUpperCase()+k.slice(1)).style.display=k===v?'':'none';cnt()});seg('#vocals',v=>{vocals=v;estimate()});
+seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;engineHint();estimate()});seg('#charMode',v=>{charMode=v;for(const k of ['auto','library','describe'])$('#cm'+k[0].toUpperCase()+k.slice(1)).style.display=k===v?'':'none';cnt()});seg('#vocals',v=>{vocals=v;estimate()});
 function setSrc(v){src=v;for(const k of ['famous','auto','own']){$('#src'+k[0].toUpperCase()+k.slice(1)).classList.toggle('on',k===v);$('#'+k+'Box').style.display=k===v?'':'none'}}
 $('#srcFamous').onclick=()=>setSrc('famous');$('#srcAuto').onclick=()=>setSrc('auto');$('#srcOwn').onclick=()=>setSrc('own');
 $('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
@@ -104,10 +105,13 @@ async function estimate(){try{const e=await api('/api/estimate',{method:'POST',h
  $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
 
 async function loadChars(){const cs=await api('/api/characters');
- $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}<br><button class="small" style="margin-top:4px;padding:2px 8px" onclick="event.stopPropagation();delChar('${c.id}','${c.name.replace(/'/g,'')}')">🗑</button></div>`).join(''):'<i class="est">Library is empty — use “Let Gemini create” or “Describe” first; those characters are saved here.</i>';
+ $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}<br>${c.sprite_url?`<span title="Cut-out used by the Animated cut-outs engine" style="display:inline-block;vertical-align:middle;background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/10px 10px;border-radius:6px"><img src="${c.sprite_url}?t=${Date.now()}" style="height:34px;width:auto;aspect-ratio:auto"></span> <button class="small" style="padding:2px 6px" title="Cut-out looks wrong? Draw it again (about ₹3)" onclick="event.stopPropagation();redoSprite('${c.id}')">🔄</button> `:''}<button class="small" style="margin-top:4px;padding:2px 8px" onclick="event.stopPropagation();delChar('${c.id}','${c.name.replace(/'/g,'')}')">🗑</button></div>`).join(''):'<i class="est">Library is empty — use “Let Gemini create” or “Describe” first; those characters are saved here.</i>';
  document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;if(!selected.has(id)&&selected.size>=2)return alert('Up to 2 characters per video');selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');cnt()});
  for(const id of [...selected])if(!cs.some(c=>c.id===id))selected.delete(id);cnt()}
+function engineHint(){$('#engineHint').textContent={images:'Slideshow of AI pictures with a slow camera move. Cheapest, least motion.',cutout:'Backgrounds and characters are drawn separately and animated by code: hops, wiggles and sparkles on the beat, props pop on their word. Characters and backgrounds are reused across videos, so it gets cheaper as your library grows. Works best in 2D.',veo:'AI video clips. Most expensive; each scene is one 8 s clip.'}[engine]||''}
 function cnt(){$('#charCount').textContent=charMode==='library'?selected.size+' selected':charMode==='describe'?'your description':'Gemini decides'}
+async function redoSprite(id){if(!confirm('Draw this character’s animated cut-out again? (about ₹3; use it if the cut-out has leftover background or missing parts)'))return;
+ try{await api(`/api/characters/${id}/sprite?mode=${mode}&regenerate=true`,{method:'POST'});loadChars()}catch(e){alert(e.message)}}
 async function delChar(id,name){if(!confirm(`Delete ${name} from the library? Videos already made are not affected.`))return;await api('/api/characters/'+id,{method:'DELETE'});selected.delete(id);loadChars()}
 
 
@@ -128,8 +132,9 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
  const s=j.script||{},cost=j.cost||{by_kind:{}};const kinds={text:'Gemini text',image:'Images',veo:'Veo clips',tts:'Voice (TTS)',sung:'Sung song (ElevenLabs)'};
  const rows=Object.entries(cost.by_kind).map(([k,v])=>`<tr><td>${kinds[k]||k}</td><td>${v.quantity.toFixed(0)} ${k==='veo'?'s':k==='tts'?'chars':k==='text'?'tokens':k==='sung'?'min':'imgs'}${v.cached_hits?` <span class="badge">${v.cached_hits} cached</span>`:''}</td><td style="text-align:right">${inr(v.inr)}</td></tr>`).join('');
  
- const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${LNAME(lang)} <span class="badge">${o.duration_total||o.duration}s${o.bookends?' incl. intro/outro':''}</span> ${o.smoothness?(o.smoothness.ok?'<span class="badge" style="background:#dff5df" title="Checked: no frozen or hanging moments">✓ smooth</span> ':`<span class="badge" style="background:#ffe3e3" title="Still moments at ${o.smoothness.frozen.map(f=>f.start+'s').join(', ')}">⚠ ${o.smoothness.frozen.length} still moment(s)</span> `):''}${o.sync==='plan'?'<span class="badge" style="background:#ffe3e3" title="Could not measure where the song lines are; pictures follow the plan and may drift. Give the ElevenLabs key Forced Alignment access.">⚠ timing estimated</span>':o.sync?'<span class="badge" style="background:#dff5df" title="Pictures are cut to where each line is actually heard">✓ synced</span>':''}</h3>
-  <video controls preload="metadata" src="/api/jobs/${j.id}/files/${o.video}" poster="/api/jobs/${j.id}/files/${o.thumbnail}"></video>
+ const outs=Object.entries(j.outputs||{}).map(([lang,o])=>`<div><h3 style="margin:6px 0">${LNAME(lang)} ${rhymeBadge(j,lang)}<span class="badge">${o.duration_total||o.duration}s${o.bookends?' incl. intro/outro':''}</span> ${o.smoothness?(o.smoothness.ok?'<span class="badge" style="background:#dff5df" title="Checked: no frozen or hanging moments">✓ smooth</span> ':`<span class="badge" style="background:#ffe3e3" title="Still moments at ${o.smoothness.frozen.map(f=>f.start+'s').join(', ')}">⚠ ${o.smoothness.frozen.length} still moment(s)</span> `):''}${o.sync==='plan'?'<span class="badge" style="background:#ffe3e3" title="Could not measure where the song lines are; pictures follow the plan and may drift. Give the ElevenLabs key Forced Alignment access.">⚠ timing estimated</span>':o.sync?'<span class="badge" style="background:#dff5df" title="Pictures are cut to where each line is actually heard">✓ synced</span>':''}</h3>
+  <video controls preload="metadata" src="/api/jobs/${j.id}/files/${o.video}" poster="/api/jobs/${j.id}/files/${o.thumbnail}?v=${o.thumbs_v||0}"></video>
+  ${thumbBox(j,lang,o)}
   <div style="font-size:13px;margin:6px 0"><b>${esc(o.title)}</b> <button class="small" style="padding:1px 6px" onclick="copyTxt(this,${esc(JSON.stringify(o.title||''))})">📋</button>
    <div style="color:#2a5bd7;margin:4px 0">${(o.hashtags||[]).map(esc).join(' ')}</div>
    <details><summary style="cursor:pointer">Description &amp; tags (written for YouTube search)</summary>
@@ -160,6 +165,16 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
 function esc(t){return String(t??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
 const PLAT={youtube:['▶','YouTube video'],youtube_short:['📱','YouTube Short'],facebook:['📘','Facebook Page'],instagram:['📸','Instagram Reel']};
 let SOC={youtube:{channels:{}},meta:{}};
+function rhymeBadge(j,lang){const r=((j.script||{}).rhyme||{})[lang];if(!r)return '';
+ if(r.skipped)return '<span class="badge" title="Your poem is kept exactly as you wrote it">♪ original</span> ';
+ return r.ok?'<span class="badge" style="background:#dff5df" title="Every couplet ends in rhyming sounds (checked automatically)">♪ rhymes ✓</span> ':`<span class="badge" style="background:#fff3c4" title="${r.failed} of ${r.couplets} couplets could not be made to rhyme${r.note?' — '+esc(r.note):''}">♪ ${r.failed}/${r.couplets} couplets off</span> `}
+function thumbBox(j,lang,o){const t=o.thumbnails||[];
+ if(!t.length)return `<div class="row" style="margin:6px 0"><button class="small" onclick="makeThumbs('${j.id}','${lang}',this)">🖼 Create 2 thumbnail options (free)</button></div>`;
+ return `<div style="margin:6px 0"><div style="font-size:13px;margin-bottom:3px">🖼 <b>Thumbnail</b> <span class="est" style="margin:0">tap the one to use on YouTube</span></div><div class="row" style="align-items:flex-start;flex-wrap:nowrap">${t.map(x=>{const on=o.thumbnail_choice===x.id;
+  return `<div style="flex:1;min-width:0"><img src="/api/jobs/${j.id}/files/${x.file}?v=${o.thumbs_v||0}" onclick="pickThumb('${j.id}','${lang}','${x.id}')" style="width:100%;border-radius:8px;cursor:pointer;border:3px solid ${on?'var(--red)':'transparent'};box-sizing:border-box" title="${esc(x.label)}">
+  <div style="font-size:12px;display:flex;justify-content:space-between;align-items:center"><span>${on?'✓ ':''}${esc(x.label)}</span><a href="/api/jobs/${j.id}/files/${x.file}?download=1" style="color:inherit" title="Download">⬇</a></div></div>`}).join('')}</div></div>`}
+async function pickThumb(id,lang,choice){try{await api(`/api/jobs/${id}/thumbnail/${lang}/${choice}`,{method:'POST'});render(await api('/api/jobs/'+id))}catch(e){alert(e.message)}}
+async function makeThumbs(id,lang,btn){btn.disabled=true;btn.textContent='Creating…';try{await api(`/api/jobs/${id}/thumbnails?lang=${lang}`,{method:'POST'});render(await api('/api/jobs/'+id))}catch(e){alert(e.message);btn.disabled=false;btn.textContent='🖼 Create 2 thumbnail options (free)'}}
 function pubBox(j,lang,o){const pub=o.published||{};if(o.youtube&&!pub.youtube)pub.youtube={status:'done',...o.youtube};
  const ytOk=!!(SOC.youtube.channels[lang]||SOC.youtube.channels.default),mOk=!!SOC.meta.connected,igOk=!!SOC.meta.instagram;
  const avail={youtube:ytOk,youtube_short:ytOk,facebook:mOk,instagram:igOk};
@@ -226,7 +241,22 @@ function langCost(){const j=lastJob,sel=$('#addLang');if(!j||!sel||!sel.value)re
  $('#langCostLbl').innerHTML=`${hasLyrics?'✓ Lyrics already exist':'✍️ Lyrics will be written by Gemini'} · ${sung?'🎤 ElevenLabs song':'🗣 Google voice'} · pictures reused (₹0) · est. <b>${inr(voice+text)}</b>`}
 async function addLang(id){const lang=$('#addLang').value;if(!lang)return;if(!confirm(`Create the ${LNAME(lang)} version of this video?\n\n${$('#langCostLbl').textContent}`))return;
  try{await api(`/api/jobs/${id}/languages/${lang}`,{method:'POST'});watch(id)}catch(e){alert(e.message)}}
-function copyTxt(btn,t){navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='✓ Copied';setTimeout(()=>btn.textContent=o,1200)})}
+function copyText(text){
+  // navigator.clipboard only exists on https:// and localhost; plain http:// needs the older execCommand route
+  return new Promise(function(resolve){
+    function legacy(){
+      try{
+        var ta=document.createElement('textarea');ta.value=text;ta.setAttribute('readonly','');
+        ta.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+        document.body.appendChild(ta);ta.select();ta.setSelectionRange(0,text.length);
+        var ok=document.execCommand('copy');document.body.removeChild(ta);resolve(ok);
+      }catch(e){resolve(false)}
+    }
+    if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(function(){resolve(true)},legacy)}else legacy();
+  });
+}
+async function copyTxt(btn,t){const o=btn.dataset.label||btn.textContent;btn.dataset.label=o;const ok=await copyText(t);
+ btn.textContent=ok?'✓ Copied':'Press Ctrl+C';if(!ok)window.prompt('Copy with Ctrl+C, then Enter:',t);setTimeout(()=>btn.textContent=o,1500)}
 async function setLyrics(id,lang,on){if(!confirm(on?`Draw animated lyrics on the ${LNAME(lang)} video? Free — takes about a minute. If it's already on YouTube, upload it again to update.`:`Remove the on-screen lyrics from the ${LNAME(lang)} video? (The clean version is kept, nothing is regenerated.)`))return;
  try{await api(`/api/jobs/${id}/lyrics?lang=${lang}&on=${on}`,{method:'POST'});watch(id)}catch(e){alert(e.message)}}
 async function resume_(id){await api('/api/jobs/'+id+'/resume',{method:'POST'});watch(id)}
@@ -234,7 +264,7 @@ async function del_(id){if(!confirm('Delete this video and its files from the se
 async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${(j.languages||[]).map(l=>`<span class="badge">${l}</span>`).join(' ')} ${j.cost?inr(j.cost.total_inr_all_attempts||j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''} <button class="small" style="float:right;padding:2px 8px" title="Delete video" onclick="del_('${j.id}')">🗑</button></div>`).join(''):'<i>None yet</i>'}
 async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued'||j.status==='waiting')watch(id);else render(j)}
 
-(async()=>{cfg=await api('/api/config');
+(async()=>{cfg=await api('/api/config');engineHint();
  if(!cfg.elevenlabs){const b=document.querySelector('#vocals button[data-v=sung]');b.disabled=true;b.title='Set ELEVENLABS_API_KEY on the server';b.style.opacity=.5}
  await headerStatus();if(/connected=/.test(location.search)){toggleAccounts();history.replaceState(null,'','/')}
  LANGS=await api('/api/languages');$('#langs').innerHTML=LANGS.map(l=>`<label style="margin:0;font-size:13px;color:var(--ink);white-space:nowrap"><input type="checkbox" value="${l.code}" ${['en','hi'].includes(l.code)?'checked':''}> ${l.name}${l.native!==l.name?' · '+l.native:''}</label>`).join('');

@@ -97,7 +97,17 @@ The page is one screen: left column = settings 1-2-3, right column = progress / 
 
 **2 · Look & feel**
 - *Animation mode*: `🧊 3D rendered` (what Cocomelon / Little Treehouse look like — default) or `🎨 2D cartoon`.
-- *Motion engine*: `💸 Keyframes + smooth camera` (≈₹55 per video, default) or `🎬 Veo video clips` (≈₹1,500).
+- *Motion engine* (the three can be mixed freely from video to video):
+  - `💸 Keyframes + smooth camera` (≈₹55 per video, default): a slideshow of AI pictures with a slow camera move.
+  - `🎭 Animated cut-outs (new)`: backgrounds and characters are drawn **separately**, then animated by code.
+    Characters hop, sway or dance **on the beat of the music**, squash and stretch, cast a shadow and pulse with
+    the voice; props (apple, star, duck…) pop up exactly when the lyric mentions them; sparkles twinkle; a gentle
+    camera move runs over everything. Because pieces are separate they are **reused**: each character's cut-out
+    is made once (kept in the library), backgrounds come from a fixed list of places (meadow, pond, bedroom…) and
+    props are cached by name, so the first video costs about ₹40 and later ones ₹10–25. It looks best in 2D.
+    If a character's cut-out looks wrong (leftover background, missing parts) press 🔄 next to its small preview
+    in the character library to draw it again (about ₹3).
+  - `🎬 Veo video clips` (≈₹1,500): AI video, each scene one 8 s clip.
 - *Vocals*: `🗣 Spoken rhyme` (Google TTS, ≈₹3) or `🎤 Sung song` (ElevenLabs, ≈₹25 per language;
   greyed out until `ELEVENLABS_API_KEY` is set).
 - *Output videos*: tick any languages (English, हिंदी, Urdu, Tamil, German, French, Spanish…) — each
@@ -145,6 +155,26 @@ voice and YouTube text are generated; the pictures are reused, so it costs a few
 
 **Previous videos** (bottom right) lists every past job with status and cost — click a title to
 reopen it, download again, add a language or publish later; 🗑 deletes it from the server.
+
+### Lyrics that rhyme in every language
+Lyrics are no longer translated line by line (that destroys the rhyme). Each language is written as its own
+song for the same pictures, and for every line Gemini reports the rhyming sound of the ending ("ara" for
+तारा / प्यारा). The app compares those endings couplet by couplet (lines 1+2, 3+4 …), and rewrites one line of any
+couplet that doesn't rhyme, up to twice. You'll see **♪ rhymes ✓** next to each language, or
+**♪ 2/8 couplets off** if some couldn't be fixed. A poem you paste yourself (or a built-in classic) is kept exactly
+as written in its own language; only the *other* languages are written to rhyme. Old videos keep their old
+lyrics; a language you add later is written with the new method.
+
+### Thumbnails
+Each language gets **two thumbnail options** made from the pictures already generated (no extra cost): *Big title*
+(whole picture, title on top, yellow frame) and *Close-up* (zoomed in, title at the bottom, pink frame), with the
+logo and the title in big rounded letters. Tap the one you prefer under the video; that one is uploaded to YouTube
+and used as the Instagram cover. Old videos show **🖼 Create 2 thumbnail options (free)**.
+
+### Use https:// for the app address
+Open the app (and set `PUBLIC_BASE_URL`, `YOUTUBE_REDIRECT_URI`) with **https://**. On plain `http://` browsers
+switch off clipboard access (the 📋 buttons now have a fallback, but nothing else can), and Facebook/Instagram
+refuse to log in or fetch videos. In Coolify the domain must be entered as `https://your-domain`.
 
 ### If you see "429 RESOURCE_EXHAUSTED"
 New GCP projects have small per-minute quotas (image model ≈ 5–10 requests/min). The app

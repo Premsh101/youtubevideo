@@ -72,7 +72,10 @@ def estimate(num_scenes: int, engine: str, languages: list[str], chars_per_lang:
     """Rough pre-flight estimate shown before the user clicks Generate."""
     led = CostLedger()
     led.text("script", 2500, 2500)
-    led.image("keyframes", num_scenes + 1)
+    if engine == "cutout":   # ≈ 6 backgrounds + 3 props (+ a one-time cut-out per new character)
+        led.image("backgrounds + props", min(num_scenes, 9))
+    else:
+        led.image("keyframes", num_scenes + 1)
     if engine == "veo":
         led.veo("clips", num_scenes * config.VEO_CLIP_SECONDS)
     for lang in languages:

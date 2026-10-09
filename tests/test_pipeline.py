@@ -567,3 +567,101 @@ def test_independent_rhyme_judge_overrides_the_writers_own_claims(monkeypatch):
 
     script, rep = run(lambda texts, lang, ledger: None)                 # judge unavailable: writer's own check decides
     assert rep["ok"] and rep["tries"] == 1
+
+
+# ------------------------------------------------------------------ your own clips
+def _lavfi_video(path, size, seconds, fps=25, sound=False):
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate={fps}:duration={seconds}"]
+    if sound:
+        cmd += ["-f", "lavfi", "-i", f"sine=frequency=500:duration={seconds}", "-c:a", "aac", "-shortest"]
+    subprocess.run(cmd + ["-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
+    return path.read_bytes()
+
+
+def _upload(name, data):
+    r = client.post("/api/clips", files={"file": (name, data, "video/mp4")})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_clip_upload_validation(tmp_path, monkeypatch):
+    from app import clips
+    ok = _upload("wide.mp4", _lavfi_video(tmp_path / "w.mp4", "640x360", 3))
+    assert ok["duration"] == 3.0 and (ok["width"], ok["height"]) == (640, 360) and not ok["has_audio"]
+    assert client.get(ok["thumb_url"]).status_code == 200
+    assert client.post("/api/clips", files={"file": ("notes.txt", b"hello", "text/plain")}).status_code == 400
+    r = client.post("/api/clips", files={"file": ("fake.mp4", b"this is not a video", "video/mp4")})
+    assert r.status_code == 400 and "readable" in r.json()["detail"]
+    with monkeypatch.context() as m:       # only for this one upload
+        m.setattr(clips, "MAX_SECONDS", 2.0)
+        r = client.post("/api/clips", files={"file": ("long.mp4", (tmp_path / "w.mp4").read_bytes(), "video/mp4")})
+    assert r.status_code == 400 and "keep clips under" in r.json()["detail"]
+    assert client.get("/api/clips").json()[0]["id"] == ok["id"]
+    assert client.delete(f"/api/clips/{ok['id']}").json()["ok"] and client.get(ok["thumb_url"]).status_code == 404
+    # segment planning: ~7 s per line, and an odd count is made even so couplets can rhyme
+    a = _upload("a.mp4", _lavfi_video(tmp_path / "a.mp4", "640x360", 6))
+    b = _upload("b.mp4", _lavfi_video(tmp_path / "b.mp4", "640x360", 9))
+    segs = clips.plan_segments([a["id"], b["id"]])
+    assert len(segs) % 2 == 0 and abs(sum(s["duration"] for s in segs) - 15) < 0.01
+    assert all(abs(s["end"] - s["start"] - s["duration"]) < 1e-6 for s in segs)
+    for c in (a, b):
+        client.delete(f"/api/clips/{c['id']}")
+
+
+def test_clips_video_end_to_end_reuse_and_add_language(tmp_path):
+    """Upload clips (16:9, vertical with sound, square, one flagged), lyrics are written to fit them, the footage
+    is fitted to the voice without freezing, and a language can be added after the uploads are deleted."""
+    import numpy as np
+    wide = _upload("wide.mp4", _lavfi_video(tmp_path / "w.mp4", "640x360", 6))
+    vert = _upload("vertical.mp4", _lavfi_video(tmp_path / "v.mp4", "360x640", 9, sound=True))
+    square = _upload("square.mp4", _lavfi_video(tmp_path / "s.mp4", "480x480", 4))
+    scary = _upload("scary_dog.mp4", _lavfi_video(tmp_path / "x.mp4", "640x360", 5))
+    assert vert["has_audio"] and vert["height"] > vert["width"]
+    ids = [wide["id"], vert["id"], square["id"], scary["id"]]
+    body = {"mode": "2d", "engine": "clips", "clips": ids, "languages": ["en", "hi"], "topic": "hopping", "bookends": False}
+
+    est = client.post("/api/estimate", json=body).json()
+    assert est["scenes"] >= 4 and "image" not in est["by_kind"] and est["total_inr"] < 20
+    assert client.post("/api/jobs", json={**body, "clips": []}).status_code == 400
+    assert client.post("/api/jobs", json={**body, "clips": ["c-nope"]}).status_code == 404
+
+    j = _wait(client.post("/api/jobs", json=body).json()["id"])
+    assert j["status"] == "done", j.get("error")
+    d = config.OUTPUT_DIR / j["id"]
+    segs = j["clips_plan"]["segments"]
+    assert len(segs) % 2 == 0 and len(segs) == len(j["script"]["scenes"]) == len(j["keyframes"])
+    for s in segs:   # every piece is at the video's size, whatever shape the upload had (vertical/square get a blurred backdrop)
+        sz = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                                      "-of", "csv=p=0", str(d / s["file"])]).decode().strip()
+        assert sz == "640,360", (s["file"], sz)
+    assert [w["clip"] for w in j["clips_plan"]["warnings"]] == ["scary_dog"]        # flagged for the owner to check
+    for lang in ("en", "hi"):
+        assert j["script"]["rhyme"][lang]["ok"], j["script"]["rhyme"][lang]
+        o, tl = j["outputs"][lang], j["timelines"][lang]
+        assert o["smoothness"]["ok"], o["smoothness"]                                # no frozen/hung moments
+        main = d / o["video_main"]
+        n = int(subprocess.check_output(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                                         "stream=nb_read_frames", "-of", "csv=p=0", str(main)]).decode())
+        assert n == round(tl["total"] * 24)                                          # frame-exact against the audio
+        assert [t["id"] for t in o["thumbnails"]] == ["A", "B"]
+        assert all(dur >= s["duration"] - 0.05 for dur, s in zip(tl["durations"], segs))   # footage is never trimmed
+    kinds = j["cost"]["by_kind"]
+    assert "image" not in kinds and "veo" not in kinds and j["cost"]["total_inr"] < 15   # no pictures drawn at all
+
+    # the second video reuses the clips: Gemini's description of each clip is cached, so watching is free
+    j2 = _wait(client.post("/api/jobs", json={**body, "languages": ["en"]}).json()["id"])
+    assert j2["status"] == "done", j2.get("error")
+    watch = [i for i in j2["cost"]["items"] if i["detail"].startswith("watch clip")]
+    assert watch and all(i["cached"] for i in watch)
+
+    # delete every upload: the finished video carries its own footage, so a language can still be added
+    for cid in ids:
+        client.delete(f"/api/clips/{cid}")
+    assert client.get("/api/clips").json() == []
+    assert client.post(f"/api/jobs/{j2['id']}/languages/de").json()["ok"]
+    time.sleep(1)
+    j3 = _wait(j2["id"])
+    assert j3["status"] == "done", j3.get("error")
+    de = config.OUTPUT_DIR / j2["id"] / j3["outputs"]["de"]["video_main"]
+    assert abs(tts_dur(de) - j3["timelines"]["de"]["total"]) < 0.1
+    assert j3["script"]["rhyme"]["de"]["ok"]

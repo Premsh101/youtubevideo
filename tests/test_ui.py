@@ -68,3 +68,33 @@ def test_copy_buttons_work_even_on_plain_http(server, insecure):
             assert pg.input_value("#paste") == expected
         assert errors == []
         b.close()
+
+
+@pytest.mark.skipif(not CHROME, reason="Chromium not installed")
+def test_clips_panel_upload_select_and_hide_irrelevant_options(server, tmp_path):
+    clip = tmp_path / "c.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=4",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip)], check=True)
+    with sync_playwright() as p:
+        b = p.chromium.launch(executable_path=CHROME)
+        pg = b.new_page()
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto("http://127.0.0.1:8767/")
+        pg.wait_for_selector("#srcClips")
+        assert pg.is_visible("#charBox") and pg.is_visible("#lookBox")           # normal modes show drawing options
+        pg.click("#srcClips")
+        pg.wait_for_selector("#clipDrop")
+        assert not pg.is_visible("#charBox") and not pg.is_visible("#lookBox") and not pg.is_visible("#lenBox")
+        pg.set_input_files("#clipFiles", [str(clip), str(clip)])
+        pg.wait_for_selector("#clipList input[type=checkbox]:nth-of-type(1)")
+        pg.wait_for_function("document.querySelectorAll('#clipList input[type=checkbox]').length === 2", timeout=30000)
+        assert pg.locator("#clipList input:checked").count() == 2                  # new uploads are selected
+        pg.wait_for_function("document.querySelector('#est').innerText.includes('lyric lines')", timeout=15000)
+        pg.locator("#clipList input[type=checkbox]").nth(1).uncheck()
+        pg.wait_for_function("document.querySelector('#clipProg').innerText.startsWith('1 clip')")
+        pg.click("button[onclick^='clipMove(0,1)']")                                # reorder works
+        pg.click("#srcFamous")
+        assert pg.is_visible("#charBox") and pg.is_visible("#lookBox")             # switching back restores the options
+        assert errors == []
+        b.close()

@@ -68,11 +68,15 @@ class CostLedger:
 
 
 def estimate(num_scenes: int, engine: str, languages: list[str], chars_per_lang: int = 1200,
-             vocals: str = "tts", seconds: int = 120) -> dict:
+             vocals: str = "tts", seconds: int = 120, clip_seconds: float = 0) -> dict:
     """Rough pre-flight estimate shown before the user clicks Generate."""
     led = CostLedger()
     led.text("script", 2500, 2500)
-    if engine == "cutout":   # ≈ 6 backgrounds + 3 props (+ a one-time cut-out per new character)
+    if engine == "clips":    # no pictures to draw: Gemini watches the footage (≈ 300 tokens per second) and writes lyrics
+        led.text("watch your clips", int(clip_seconds * 300), 600)
+        for lang in languages:
+            led.text(f"rhyming lyrics {lang}", 1500, 1200)
+    elif engine == "cutout":   # ≈ 6 backgrounds + 3 props (+ a one-time cut-out per new character)
         led.image("backgrounds + props", min(num_scenes, 9))
     else:
         led.image("keyframes", num_scenes + 1)

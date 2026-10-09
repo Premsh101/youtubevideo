@@ -41,9 +41,11 @@ def _hash(*parts: str | bytes) -> str:
 
 
 # --------------------------------------------------------------------------- text
-def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = True) -> dict:
-    """Ask Gemini for strict JSON. Cached by prompt hash so re-runs are free."""
-    key = _hash("json", config.TEXT_MODEL, prompt)
+def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = True,
+                  media: list[Path] | None = None) -> dict:
+    """Ask Gemini for strict JSON. Cached by prompt (+ attached video) hash so re-runs are free.
+    `media`: small video files Gemini should watch while answering."""
+    key = _hash("json", config.TEXT_MODEL, prompt, *[m.read_bytes() for m in (media or [])])
     cache_file = config.CACHE_DIR / "text" / f"{key}.json"
     if cache and cache_file.exists():
         ledger.text(detail, 0, 0, cached=True)
@@ -55,13 +57,18 @@ def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = Tr
         ledger.text(detail, 1500, 1500)
     else:
         from google.genai import types
+        contents: list | str = prompt
+        cfg = dict(response_mime_type="application/json", temperature=0.9)
+        if media:
+            contents = [types.Part.from_bytes(data=m.read_bytes(), mime_type="video/mp4") for m in media] + [prompt]
+            cfg["temperature"] = 0.4
+            low = getattr(getattr(types, "MediaResolution", None), "MEDIA_RESOLUTION_LOW", None)
+            if low is not None:   # fewer tokens per frame: plenty to understand a cartoon
+                cfg["media_resolution"] = low
         resp = retry.guarded("text", lambda: client().models.generate_content(
             model=config.TEXT_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.9,
-            ),
+            contents=contents,
+            config=types.GenerateContentConfig(**cfg),
         ))
         usage = resp.usage_metadata
         ledger.text(detail, usage.prompt_token_count or 0, usage.candidates_token_count or 0)

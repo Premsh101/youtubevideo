@@ -396,3 +396,174 @@ def test_veo_scenes_never_freeze():
     assert o["smoothness"]["ok"], o["smoothness"]
     main = config.OUTPUT_DIR / j["id"] / o["video_main"]
     assert abs(tts_dur(main) - tl["total"]) < 0.1
+
+
+# ------------------------------------------------------------------ rhyming lyrics, cut-outs, thumbnails
+def test_rhyme_checker_and_native_lyrics_with_repair():
+    from app import lyrics
+    assert lyrics.couplets(8) == [(0, 1), (2, 3), (4, 5), (6, 7)] and lyrics.couplets(5)[-1] == (3, 4)
+    for a, b in (("aara", "ara"), ("aan", "an"), ("ee", "i"), ("ar", "ar")):
+        assert lyrics.rhymes(a, b), (a, b)
+    for a, b in (("ara", "ina"), ("ar", "ur"), ("", "ara")):
+        assert not lyrics.rhymes(a, b), (a, b)
+    assert lyrics.detect_language("मछली जल की रानी है") == "hi" and lyrics.detect_language("Johny Johny") == "en"
+
+    # topic mode: both languages are WRITTEN as rhyming songs and checked; the mock's first attempt has one bad
+    # couplet, so the repair loop must run and fix it
+    r = client.post("/api/jobs", json={"mode": "2d", "languages": ["en", "hi"], "topic": "stars", "target_seconds": 45})
+    j = _wait(r.json()["id"])
+    assert j["status"] == "done", j.get("error")
+    for lang in ("en", "hi"):
+        rep = j["script"]["rhyme"][lang]
+        assert rep["ok"] and rep["tries"] == 1 and rep["failed"] == 0, rep
+        sounds = [s[f"end_{lang}"] for s in j["script"]["scenes"]]
+        assert lyrics.failing(sounds) == []
+    # chorus lines stay word-for-word identical
+    chorus = {s["line_hi"] for s in j["script"]["scenes"] if s.get("is_chorus")}
+    assert len(chorus) <= 1
+
+    # a classic in its own language is kept exactly; the other language is written to rhyme
+    r = client.post("/api/jobs", json={"mode": "2d", "languages": ["en", "hi"], "preset": "machli", "target_seconds": 45})
+    j2 = _wait(r.json()["id"])
+    assert j2["status"] == "done", j2.get("error")
+    assert j2["script"]["rhyme"]["hi"].get("skipped") and j2["script"]["rhyme"]["en"]["ok"]
+
+
+def test_cutout_engine_beats_reuse_and_add_language():
+    """The new engine: separate backgrounds/sprites/props, animated on the beat, frame-exact, reused across
+    videos (so the second video pays for far less), and a language can be added later."""
+    body = {"mode": "2d", "engine": "cutout", "languages": ["en"], "topic": "stars", "target_seconds": 45,
+            "bookends": False, "lyrics_on_screen": False}
+    j = _wait(client.post("/api/jobs", json=body).json()["id"])
+    assert j["status"] == "done", j.get("error")
+    d = config.OUTPUT_DIR / j["id"]
+    spec = j["cutout"]["scenes"]
+    assert len(spec) == len(j["script"]["scenes"]) and (d / "assets").is_dir()
+    assert all((d / "assets" / sc["bg"]).exists() and sc["chars"] and (d / "assets" / sc["chars"][0]["sprite"]).exists() for sc in spec)
+    assert len({sc["bg"] for sc in spec}) < len(spec)                     # fewer backgrounds than scenes
+    tl = j["timelines"]["en"]
+    assert tl["beats"]["method"] == "known" and tl["beats"]["bpm"] == 92
+    o = j["outputs"]["en"]
+    main = d / o["video_main"]
+    assert o["smoothness"]["ok"] and abs(tts_dur(main) - tl["total"]) < 0.1
+    n = int(subprocess.check_output(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                                     "stream=nb_read_frames", "-of", "csv=p=0", str(main)]).decode())
+    assert n == round(tl["total"] * 24)                                   # frame-exact
+    # the characters really move: frames a quarter-beat apart differ in the sprite area
+    import numpy as np
+    f0 = np.asarray(_frame(main, 20.0)).astype(int)
+    f1 = np.asarray(_frame(main, 20.0 + 0.4)).astype(int)
+    assert np.abs(f0 - f1).mean() > 0.5
+    # the character's cut-out is stored in the library for reuse
+    lib = client.get("/api/characters").json()
+    assert any(c.get("sprite_url") for c in lib)
+
+    # second video, same character library: sprite, backgrounds and props come from cache → far fewer new images
+    j2 = _wait(client.post("/api/jobs", json={**body, "character_mode": "library",
+                                              "characters": [j["cast"][0]["id"]]}).json()["id"])
+    assert j2["status"] == "done", j2.get("error")
+    paid = lambda job: sum(1 for i in job["cost"]["items"] if i["kind"] == "image" and not i["cached"])
+    assert paid(j2) < paid(j)
+
+    # add Hindi later: assets reused, animation re-timed to the Hindi audio, still frame-exact
+    assert client.post(f"/api/jobs/{j['id']}/languages/hi").json()["ok"]
+    time.sleep(1)
+    j3 = _wait(j["id"])
+    assert j3["status"] == "done", j3.get("error")
+    assert not any(i["kind"] == "image" and not i["cached"] for i in j3["cost"]["items"])
+    hi = config.OUTPUT_DIR / j["id"] / j3["outputs"]["hi"]["video_main"]
+    assert abs(tts_dur(hi) - j3["timelines"]["hi"]["total"]) < 0.1
+
+
+def test_beat_detector_finds_tempo_and_phase():
+    from app import beats, music, toddler
+    out = config.CACHE_DIR / "beat_test.wav"
+    for bpm in (92, 108):
+        old = toddler.MUSIC["bpm"]
+        toddler.MUSIC["bpm"] = bpm
+        try:
+            music.synth_lullaby(30, f"bt{bpm}", out)
+        finally:
+            toddler.MUSIC["bpm"] = old
+        g = beats.detect(out)
+        assert abs(g.bpm - bpm) < 0.6
+        per = 60 / bpm
+        assert abs(((g.offset / per) + 0.5) % 1 - 0.5) * per < 0.05      # within ~1 video frame of the true beat
+
+
+def test_chroma_cutout_removes_background_keeps_subject():
+    import numpy as np
+    from PIL import Image, ImageDraw
+    from app import chroma
+    for bg, key, body in (("#00FF00", "green", "#FFA3D7"), ("#FF00FF", "magenta", "#58C23A")):
+        img = Image.new("RGB", (400, 400), bg)
+        d = ImageDraw.Draw(img)
+        d.ellipse((60, 60, 340, 360), fill=body, outline="#333", width=6)
+        d.rectangle((150, 220, 250, 270), fill="white")                    # white belly must stay solid
+        a = np.asarray(chroma.cut_out(img, key).getchannel("A"))
+        h, w = a.shape
+        assert a[0, 0] == 0 and a[-1, -1] == 0
+        assert a[int(h * 0.55):int(h * 0.65), int(w * 0.45):int(w * 0.55)].min() > 250
+    assert chroma.pick_key(["sunshine yellow", "grass green"]) == "magenta" and chroma.pick_key(["candy pink"]) == "green"
+
+
+def test_two_thumbnail_options_choose_and_old_videos():
+    from PIL import Image
+    j = _wait(client.post("/api/jobs", json={"mode": "2d", "languages": ["en", "hi"], "preset": "twinkle",
+                                              "target_seconds": 40, "bookends": False}).json()["id"])
+    assert j["status"] == "done", j.get("error")
+    d = config.OUTPUT_DIR / j["id"]
+    for lang in ("en", "hi"):
+        o = j["outputs"][lang]
+        assert [t["id"] for t in o["thumbnails"]] == ["A", "B"] and o["thumbnail_choice"] == "A"
+        files = [d / t["file"] for t in o["thumbnails"]]
+        assert all(f.exists() and Image.open(f).size == (1280, 720) and f.stat().st_size < 2_000_000 for f in files)
+        assert o["thumbnails"][0]["frame"] != o["thumbnails"][1]["frame"]          # really two different frames
+        assert o["thumbnail"] == o["thumbnails"][0]["file"]
+    # pick B for Hindi only; it is what gets uploaded to YouTube
+    r = client.post(f"/api/jobs/{j['id']}/thumbnail/hi/B").json()
+    j2 = client.get(f"/api/jobs/{j['id']}").json()
+    assert j2["outputs"]["hi"]["thumbnail"] == "thumb_hi_B.jpg" and j2["outputs"]["en"]["thumbnail"] == "thumb_en_A.jpg"
+    assert client.post(f"/api/jobs/{j['id']}/thumbnail/hi/C").status_code == 404
+    # an old video without options (older version): create them from its keyframes, free
+    f = d / "job.json"
+    import json as _j
+    old = _j.loads(f.read_text())
+    for lang in old["outputs"]:
+        for k in ("thumbnails", "thumbnail_choice", "thumbs_v"):
+            old["outputs"][lang].pop(k, None)
+        old["outputs"][lang]["thumbnail"] = f"thumb_{lang}.jpg"
+    f.write_text(_j.dumps(old))
+    from app import main as m
+    m._jobs.pop(j["id"], None)
+    r = client.post(f"/api/jobs/{j['id']}/thumbnails")
+    assert r.status_code == 200 and all(len(v["thumbnails"]) == 2 for v in r.json()["outputs"].values())
+    assert client.post("/api/jobs/nope/thumbnails").status_code == 404
+
+
+def test_independent_rhyme_judge_overrides_the_writers_own_claims(monkeypatch):
+    """The writer may call a near-miss a rhyme. A fresh judge flags it and the pair gets rewritten; if the
+    judge itself fails, we still finish on the writer's own check."""
+    from app import lyrics
+    from app.costs import CostLedger
+
+    def run(judge):
+        scenes = [{"line_en": f"line {i}", "visual": "v", "is_chorus": False} for i in range(4)]
+        script = {"scenes": scenes}
+        monkeypatch.setattr(lyrics, "_judge", judge)
+        rep = lyrics.ensure_rhyming(script, "en", {}, CostLedger())
+        return script, rep
+
+    calls = {"n": 0}
+
+    def strict(texts, lang, ledger):
+        calls["n"] += 1
+        return [(0, 1)] if calls["n"] == 1 else []          # first look: couplet 1 is a near-miss
+
+    script, rep = run(strict)
+    assert rep["ok"] and rep["tries"] == 1 and calls["n"] == 2          # judged, repaired, judged again
+    assert script["scenes"][1]["line_en"] == "repaired line 2"          # the second line of the flagged couplet changed
+    assert script["scenes"][3]["line_en"] == "repaired line 4"          # and the couplet the sound-check caught
+
+    script, rep = run(lambda texts, lang, ledger: None)                 # judge unavailable: writer's own check decides
+    assert rep["ok"] and rep["tries"] == 1

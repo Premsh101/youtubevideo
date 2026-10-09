@@ -9,7 +9,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import align, branding, characters, lyrics_overlay, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
+from . import align, beats, branding, characters, cutout, lyrics, lyrics_overlay, thumbnails, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -142,6 +142,9 @@ class Job:
         # 3. keyframes — one per scene (+1 ending frame for Veo chaining)
         n_frames = len(scenes) + (1 if engine == "veo" else 0)
         keyframes: list[Path] = []
+        if engine == "cutout":   # backgrounds + cut-outs instead of finished pictures; stills double as keyframes
+            keyframes = self._build_cutout(chars, mode)
+            n_frames = 0
         char_text = "; ".join(characters.describe(c) for c in chars)
         style = toddler.style_prompt(mode)
         for i in range(n_frames):
@@ -179,13 +182,15 @@ class Job:
 
     # ------------------------------------------------------------ languages
     def _ensure_lyrics(self, lang: str) -> None:
+        """Lyrics of this language: written natively so the couplets rhyme (not translated line by line),
+        then checked; done once per language (script["rhyme"][lang] records the result)."""
         script = self.state["script"]
-        key = f"line_{lang}"
-        if all(s.get(key) for s in script["scenes"]):
+        if lang in (script.get("rhyme") or {}):
             return
-        self.step(f"Gemini is adapting the lyrics into {languages.name(lang)}", self.state["progress"])
-        for s, line in zip(script["scenes"], metadata.translate_lines(script, lang, self.ledger)):
-            s[key] = line
+        self.step(f"Writing the {languages.name(lang)} lyrics so they rhyme", self.state["progress"])
+        report = lyrics.ensure_rhyming(script, lang, self.params, self.ledger)
+        self.step(f"{languages.name(lang)} lyrics: " + ("every couplet rhymes" if report["ok"] else
+                  f"{report['failed']} of {report['couplets']} couplets could not be made to rhyme"), self.state["progress"])
         self.save()
 
     def _xfade(self) -> float:
@@ -225,8 +230,53 @@ class Job:
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1], line_t, method
 
-    def _render_visuals(self, lang: str, durations: list[float]) -> Path:
+    def _build_cutout(self, chars: list[dict], mode: str) -> list[Path]:
+        """Animated cut-outs engine: fetch / draw backgrounds, cut-out sprites and props (library-cached),
+        then save each scene at rest as its keyframe (used for thumbnails)."""
+        self.state["cutout"] = cutout.prepare(self.dir, self.state["script"], chars, mode, self.id, self.ledger,
+                                              self.step)
+        self.save()
+        out = []
+        for i, sc in enumerate(self.state["cutout"]["scenes"]):
+            dest = self.dir / f"keyframe_{i:02}.png"
+            cutout.still(sc, self.dir / "assets", config.VIDEO_W, config.VIDEO_H).save(dest)
+            out.append(dest)
+        return out
+
+    def _beat_grid(self, lang: str, total: float, song: Path | None) -> beats.Grid:
+        """When the music hits, in this language's video: known for our own lullaby, measured otherwise."""
+        if song is not None:
+            return beats.detect(song)
+        music = get_music(total, self.state["script"]["title_en"])
+        if config.CACHE_DIR / "music" in music.parents:   # our synthesised lullaby: exact tempo, starts on the beat
+            return beats.Grid(bpm=toddler.MUSIC["bpm"], offset=0.0, method="known")
+        return beats.detect(music)
+
+    def _render_cutout(self, lang: str, durations: list[float], song: Path | None) -> Path:
+        scenes = self.state["script"]["scenes"]
+        tl = self.state["timelines"][lang]
+        grid = self._beat_grid(lang, tl["total"], song)
+        tl["beats"] = {"bpm": round(grid.bpm, 2), "offset": round(grid.offset, 3), "method": grid.method}
+        W, H, fps = config.VIDEO_W, config.VIDEO_H, config.FPS
+        clips = [self.dir / f"clip_{lang}_{i:02}.mp4" for i in range(len(scenes))]
+        lead, lines, files = tl["voice_lead"], tl["line_seconds"], tl["voice_files"]
+
+        def one(i: int) -> None:
+            cutout.render_scene_clip(self.state["cutout"]["scenes"][i], self.dir / "assets", W, H, fps,
+                                     round(durations[i] * fps), grid, tl["starts"][i], lead, lines[i], files[i], i, clips[i])
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(len(scenes), os.cpu_count() or 2))) as pool:
+            list(pool.map(one, range(len(scenes))))
+        silent = self.dir / f"video_silent_{lang}.mp4"
+        render.crossfade_concat(clips, durations, self._xfade(), silent)
+        for c in clips:
+            c.unlink(missing_ok=True)
+        return silent
+
+    def _render_visuals(self, lang: str, durations: list[float], song: Path | None = None) -> Path:
         """Re-time the (already paid for) keyframes / Veo clips to this language's audio. ffmpeg only."""
+        if self.params.get("engine") == "cutout":
+            return self._render_cutout(lang, durations, song)
         scenes = self.state["script"]["scenes"]
         clips = [self.dir / f"clip_{lang}_{i:02}.mp4" for i in range(len(scenes))]
 
@@ -268,9 +318,11 @@ class Job:
             song, method = None, "exact"
         self.state.setdefault("timelines", {})[lang] = {
             "durations": durations, "starts": starts, "total": total, "xfade": self._xfade(),
-            "voice_lead": lead, "sync": method}
-        self.step(f"Cutting the pictures to the {name} audio", progress + 0.1)
-        silent = self._render_visuals(lang, durations)
+            "voice_lead": lead, "sync": method,
+            "line_seconds": [round(v["duration"], 3) for v in voices], "voice_files": [v["path"] for v in voices]}
+        self.step(f"Cutting the pictures to the {name} audio" if self.params.get("engine") != "cutout"
+                  else f"Animating the characters to the {name} audio", progress + 0.1)
+        silent = self._render_visuals(lang, durations, song)
         self.step(f"Mixing {name} audio", progress + 0.2)
         if song is not None:
             audio = render.song_to_track(song, total, self.dir / f"audio_{lang}.wav")
@@ -324,6 +376,34 @@ class Job:
             o["video"], o["intro_seconds"], o["bookends"] = main, 0.0, False
             o["captions_upload"] = o["captions"]
         o["duration_total"] = round(tts.media_duration(self.dir / o["video"]), 1)
+        self._make_thumbnails(lang)
+        self.save()
+
+    def _make_thumbnails(self, lang: str) -> None:
+        """Two thumbnail options from the keyframes (free). Keeps the user's choice; works for old videos too."""
+        o = self.state["outputs"][lang]
+        frames = [self.dir / k for k in (self.state.get("keyframes") or []) if (self.dir / k).exists()]
+        frames = frames or sorted(self.dir.glob("keyframe_*.png"))
+        if not frames:
+            return
+        title = o.get("title") or (self.state.get("script") or {}).get(f"title_{lang}") or ""
+        o["thumbnails"] = thumbnails.build(frames, title, lang, self.dir, branding.LOGO if branding.has_logo() else None)
+        ids = [t["id"] for t in o["thumbnails"]]
+        o["thumbnail_choice"] = o.get("thumbnail_choice") if o.get("thumbnail_choice") in ids else "A"
+        o["thumbnail"] = next(t["file"] for t in o["thumbnails"] if t["id"] == o["thumbnail_choice"])
+        o["thumbs_v"] = int(time.time())
+
+    def make_thumbnails(self, langs: list[str] | None = None) -> None:
+        for lang in langs or list((self.state.get("outputs") or {})):
+            self._make_thumbnails(lang)
+        self.save()
+
+    def choose_thumbnail(self, lang: str, choice: str) -> None:
+        o = self.state["outputs"][lang]
+        pick = next((t for t in o.get("thumbnails") or [] if t["id"] == choice), None)
+        if not pick:
+            raise KeyError(choice)
+        o["thumbnail_choice"], o["thumbnail"] = choice, pick["file"]
         self.save()
 
     def _set_lyrics(self, lang: str, on: bool) -> None:
@@ -373,6 +453,8 @@ class Job:
             if len(found) < len(self.state["script"]["scenes"]):
                 raise RuntimeError("The pictures of this video are missing on the server; it has to be re-created.")
             self.state["keyframes"] = found
+        if self.params.get("engine") == "cutout" and not self.state.get("cutout"):
+            raise RuntimeError("This video has no saved animation data; it has to be re-created.")
         if self.params.get("engine") == "veo" and len(self.state.get("veo_clips") or []) < len(self.state["script"]["scenes"]):
             self._veo_clips()  # cache hit for clips already paid for
         self._produce_language(lang, 0.1)

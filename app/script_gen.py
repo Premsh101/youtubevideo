@@ -6,7 +6,7 @@ poem (any language) — Gemini then only translates/splits it into scenes.
 """
 from __future__ import annotations
 
-from . import config, toddler
+from . import config, cutout, toddler
 from .costs import CostLedger
 from .gemini_client import generate_json
 
@@ -20,7 +20,7 @@ def scene_count(engine: str, target_seconds: int) -> int:
 
 
 def build_prompt(topic: str | None, user_poem: str | None, characters: list[dict],
-                 mode: str, n_scenes: int) -> str:
+                 mode: str, n_scenes: int, engine: str = "images") -> str:
     char_lines = "\n".join(f"- {c['name']} the {c['species']} ({c['personality']}, {' & '.join(c['colours'])}, wears {c['signature_item']})"
                            for c in characters)
     source = (
@@ -28,6 +28,8 @@ def build_prompt(topic: str | None, user_poem: str | None, characters: list[dict
         if user_poem else
         f'Write an ORIGINAL rhyme about: "{topic or "a happy day with friends"}".'
     )
+    cutout_block = cutout.SCRIPT_BLOCK.format(keys=", ".join(cutout.LOCATIONS)) if engine == "cutout" else ""
+    cutout_fields = cutout.SCRIPT_FIELDS if engine == "cutout" else ""
     return f"""You write nursery rhymes for toddlers aged 1-3 for a bilingual (English + Hindi) YouTube channel.
 
 {source}
@@ -36,7 +38,7 @@ Characters that MUST appear (same look in every scene):
 {char_lines}
 
 Toddler rules (this is what the most-watched channels do): very simple words, LOTS of repetition,
-4-8 words per line, strong sing-song rhythm, onomatopoeia and actions (clap, splash, beep, quack),
+4-8 words per line, strong sing-song rhythm, RHYMING COUPLETS (lines 1+2, 3+4, 5+6 ... must end with rhyming words), onomatopoeia and actions (clap, splash, beep, quack),
 a short catchy HOOK line that repeats as a chorus at least 3 times across the video, and a happy
 calm ending. Mark chorus lines with "is_chorus": true (hook must be word-for-word identical each time). Hindi must be natural spoken Hindi in Devanagari (not a literal translation);
 both versions must match the same scene meaning. No scary, sad or violent content.
@@ -48,20 +50,20 @@ For "visual" write a concrete, static, uncluttered composition (who, where, doin
 foreground/background), 25-45 words, NO text in the image.
 "camera" is one of: slow zoom in, slow zoom out, gentle pan left, gentle pan right.
 "mood_colour" is one of: {', '.join(k.replace('_', ' ') for k in toddler.PALETTE)}.
-
+{cutout_block}
 Return JSON:
 {{
  "title_en": str, "title_hi": str,
  "description_en": str (2 sentences), "description_hi": str,
  "tags": [8 short tags, mixed EN/HI],
- "scenes": [{{"index": 0, "line_en": str, "line_hi": str, "is_chorus": bool, "visual": str, "camera": str, "mood_colour": str}}]
+ "scenes": [{{"index": 0, "line_en": str, "line_hi": str, "is_chorus": bool, "visual": str, "camera": str, "mood_colour": str,{cutout_fields}}}]
 }}"""
 
 
 def generate_script(topic: str | None, user_poem: str | None, characters: list[dict],
                     mode: str, engine: str, target_seconds: int, ledger: CostLedger) -> dict:
     n = scene_count(engine, target_seconds)
-    prompt = build_prompt(topic, user_poem, characters, mode, n)
+    prompt = build_prompt(topic, user_poem, characters, mode, n, engine)
     data = generate_json(prompt, ledger, "script + scenes")
     scenes = data.get("scenes") or []
     if not scenes:
@@ -72,6 +74,8 @@ def generate_script(topic: str | None, user_poem: str | None, characters: list[d
         s.setdefault("mood_colour", "sky blue")
         s["is_chorus"] = bool(s.get("is_chorus"))
     data["scenes"] = scenes
+    if engine == "cutout":
+        cutout.normalize_script(data, characters)
     data["mode"] = mode
     data["engine"] = engine
     return data

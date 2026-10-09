@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import tts
-from . import (branding, characters, config, costs, elevenlabs, languages, pipeline, presets, public_urls, publish,
+from . import (branding, characters, cutout, config, costs, elevenlabs, languages, pipeline, presets, public_urls, publish,
                script_gen, social, youtube)
 from .costs import CostLedger
 
@@ -80,6 +80,8 @@ def api_characters() -> list[dict]:
     out = characters.list_characters()
     for c in out:
         c["sheet_url"] = f"/api/characters/{c['id']}/sheet.png" if c["has_sheet"] else None
+        sp = next(iter(sorted((config.CHARACTER_DIR / c["id"]).glob("sprite_*.png"))), None)
+        c["sprite_url"] = f"/api/characters/{c['id']}/sprite.png" if sp else None
     return out
 
 
@@ -100,6 +102,27 @@ def api_character_sheet_png(cid: str) -> FileResponse:
     if not p:
         raise HTTPException(404)
     return FileResponse(p)
+
+
+@app.get("/api/characters/{cid}/sprite.png")
+def api_character_sprite_png(cid: str) -> FileResponse:
+    sp = next(iter(sorted((config.CHARACTER_DIR / cid).glob("sprite_*.png"))), None)
+    if not sp:
+        raise HTTPException(404)
+    return FileResponse(sp, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/characters/{cid}/sprite")
+def api_character_sprite(cid: str, mode: Literal["2d", "3d"] = "3d", regenerate: bool = False) -> dict:
+    """The character's animated cut-out (used by the Animated cut-outs engine). Redo it if the cut looks bad."""
+    ledger = CostLedger()
+    try:
+        characters.get(cid)
+    except KeyError:
+        raise HTTPException(404)
+    characters.ensure_sheet(cid, mode, ledger)
+    cutout.ensure_sprite(cid, mode, ledger, force=regenerate)
+    return {"sprite_url": f"/api/characters/{cid}/sprite.png", "cost": ledger.summary()}
 
 
 @app.delete("/api/characters/{cid}")
@@ -154,6 +177,44 @@ def api_add_language(job_id: str, lang: str) -> dict:
     return {"ok": True, "job": job_id, "language": lang}
 
 
+def _load_idle_job(job_id: str) -> pipeline.Job:
+    live = _jobs.get(job_id)
+    if live and live.state["status"] in ("running", "waiting", "queued"):
+        raise HTTPException(409, "this video is still being processed")
+    try:
+        job = pipeline.Job.load(job_id)
+    except KeyError:
+        raise HTTPException(404)
+    _jobs[job_id] = job
+    return job
+
+
+@app.post("/api/jobs/{job_id}/thumbnails")
+def api_make_thumbnails(job_id: str, lang: str = "all") -> dict:
+    """(Re)create the two thumbnail options from the video's keyframes. Free; works on old videos."""
+    job = _load_idle_job(job_id)
+    outs = job.state.get("outputs") or {}
+    langs = list(outs) if lang == "all" else [lang]
+    if not langs or any(x not in outs for x in langs):
+        raise HTTPException(404, "no such language version")
+    job.make_thumbnails(langs)
+    if not any(outs[x].get("thumbnails") for x in langs):
+        raise HTTPException(409, "this video's pictures are no longer on the server")
+    return {"ok": True, "outputs": {x: outs[x] for x in langs}}
+
+
+@app.post("/api/jobs/{job_id}/thumbnail/{lang}/{choice}")
+def api_choose_thumbnail(job_id: str, lang: str, choice: str) -> dict:
+    job = _load_idle_job(job_id)
+    if lang not in (job.state.get("outputs") or {}):
+        raise HTTPException(404)
+    try:
+        job.choose_thumbnail(lang, choice)
+    except KeyError:
+        raise HTTPException(404, "no such thumbnail option")
+    return {"ok": True, "thumbnail": job.state["outputs"][lang]["thumbnail"], "choice": choice}
+
+
 @app.get("/api/presets")
 def api_presets() -> list[dict]:
     return [{"id": p["id"], "title": p["title"], "lang": p["lang"]} for p in presets.PRESETS]
@@ -162,7 +223,7 @@ def api_presets() -> list[dict]:
 # ----------------------------------------------------------------------- jobs
 class JobIn(BaseModel):
     mode: Literal["2d", "3d"]
-    engine: Literal["images", "veo"] = "images"
+    engine: Literal["images", "veo", "cutout"] = "images"
     vocals: Literal["tts", "sung"] = "tts"
     languages: list[str] = ["en", "hi"]
     character_mode: Literal["auto", "library", "describe"] = "auto"

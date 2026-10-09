@@ -57,6 +57,7 @@ a{color:#1f6fd1}
 <a href="#s6">6 · Connect Facebook &amp; Instagram</a>
 <a href="#s6b">6½ · Logo, intro &amp; outro</a>
 <a href="#s7">7 · Publishing a video</a>
+<a href="#s7a">7a · Thumbnails, lyrics, engines</a>
 <a href="#s8">8 · Growing the channel</a>
 <a href="#s9">9 · Troubleshooting</a>
 </nav>
@@ -276,6 +277,16 @@ SHORT_MAX_SECONDS=175</pre></li>
 <div class="note">To change the position or size, set <code>LOGO_POSITION</code> (<code>right</code>, <code>left</code> or <code>center</code>) and <code>LOGO_WIDTH_PCT</code> (e.g. <code>0.15</code>) in Coolify, redeploy, then click <span class="path">✨ Apply logo to all existing videos</span>.</div>
 </section>
 
+<section id="s7a">
+<h2>7a · Thumbnails, lyrics and motion engines <span class="time">read once</span></h2>
+<ul>
+<li><b>Thumbnails:</b> every language gets two options (<i>Big title</i> and <i>Close-up</i>) built from the video's own pictures. Tap the one you like under the video; it is what YouTube and the Instagram cover use. Old videos: <span class="path">🖼 Create 2 thumbnail options</span>.</li>
+<li><b>Rhyming lyrics:</b> each language is written as its own song (not translated line by line) and the app checks that couplets rhyme. Look for <span class="path">♪ rhymes ✓</span> next to the language name.</li>
+<li><b>Motion engines:</b> <span class="path">💸 Keyframes</span> (cheap slideshow with camera moves), <span class="path">🎭 Animated cut-outs</span> (characters hop on the beat, props pop up on their word; reused assets make later videos cheaper) and <span class="path">🎬 Veo</span> (AI video, expensive).</li>
+<li><b>Use https://</b> for the app address everywhere. Over plain http the browser blocks the clipboard and Facebook/Instagram won't connect.</li>
+</ul>
+</section>
+
 <section id="s7">
 <h2>7 · Publishing a video <span class="time">1 min per video</span></h2>
 <ol>
@@ -337,10 +348,24 @@ SHORT_MAX_SECONDS=175</pre></li>
       document.querySelectorAll('.dom').forEach(function(el){ el.textContent = origin; });
     }
   } catch (e) {}
+  function copyText(text){
+    // navigator.clipboard only exists on https:// and localhost; plain http:// needs the older execCommand route
+    return new Promise(function(resolve){
+      function legacy(){
+        try{
+          var ta=document.createElement('textarea');ta.value=text;ta.setAttribute('readonly','');
+          ta.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+          document.body.appendChild(ta);ta.select();ta.setSelectionRange(0,text.length);
+          var ok=document.execCommand('copy');document.body.removeChild(ta);resolve(ok);
+        }catch(e){resolve(false)}
+      }
+      if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(function(){resolve(true)},legacy)}else legacy();
+    });
+  }
   document.querySelectorAll('pre .copy').forEach(function(btn){
     btn.addEventListener('click', function(){
       var text = btn.parentElement.innerText.replace(/^Copy\s*/, '').replace(/^Copied\s*/, '');
-      navigator.clipboard.writeText(text).then(function(){ btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1200); });
+      copyText(text).then(function(ok){ btn.textContent = ok ? 'Copied' : 'Press Ctrl+C'; if (!ok) { window.prompt('Copy with Ctrl+C, then Enter:', text); } setTimeout(function(){ btn.textContent = 'Copy'; }, 1500); });
     });
   });
 })();

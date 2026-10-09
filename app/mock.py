@@ -34,6 +34,24 @@ _RHYME_HI = [
 
 
 def mock_json(prompt: str) -> dict:
+    if prompt.startswith("JUDGE."):   # independent rhyme judge: agrees with everything unless told otherwise
+        n = len(re.findall(r"^Couplet \d+:", prompt, flags=re.M))
+        return {"couplets": [{"n": k + 1, "end_a": "x", "end_b": "x", "rhymes": True} for k in range(n)]}
+    if prompt.startswith("REPAIR."):   # rhyme repair: partner's sound is given in the prompt
+        idx = [int(x) for x in re.findall(r"line (\d+) REWRITE", prompt)]
+        snd = re.findall(r'sound "-([a-z]+)"', prompt)
+        return {"lines": [{"index": i, "text": f"repaired line {i}", "end_word": "w", "end_sound": sn} for i, sn in zip(idx, snd)]}
+    if "children's songwriter" in prompt and '"end_sound"' in prompt:   # native rhyming lyrics
+        n = int(re.search(r"Write exactly (\d+) lines", prompt).group(1))
+        lang = re.search(r"writing in ([A-Za-z]+)", prompt).group(1)
+        base = _RHYME_HI if lang == "Hindi" else _RHYME_EN if lang == "English" else None
+        lines = []
+        for i in range(n):
+            snd = "ara" if (i // 2) % 2 == 0 else "ina"
+            if i // 2 == 1 and i % 2 == 1:
+                snd = "ona"   # 2nd couplet does NOT rhyme on the first attempt: exercises the repair loop
+            lines.append({"text": base[i % len(base)] if base else f"{lang} line {i + 1}", "end_word": "w", "end_sound": snd})
+        return {"title": f"{lang} rhyme", "lines": lines}
     if '"hashtags"' in prompt:
         return {"title": "Twinkle Twinkle Little Star ⭐ | Nursery Rhymes & Kids Songs",
                 "description": "Twinkle Twinkle Little Star nursery rhyme for toddlers. Sing along!\n\nLyrics...",
@@ -66,6 +84,9 @@ def mock_json(prompt: str) -> dict:
             "line_en": en,
             "line_hi": hi,
             "is_chorus": i in (0, 7),
+            "location": ["meadow", "meadow", "pond", "night_sky"][(i // 2) % 4],
+            "characters": [{"name": "Tara", "position": ["center", "left", "right"][i % 3], "action": ["hop", "sway", "dance", "wave", "peek", "grow"][i % 6]}],
+            "props": [{"name": ["star", "apple", "duck", "ball"][i % 4], "at": 0.3 + 0.1 * (i % 3)}] if i % 2 == 0 else [],
             "visual": f"The character looks up at a {['big', 'tiny', 'golden', 'smiling'][i % 4]} star over a soft blue night meadow, scene {i + 1}",
             "camera": ["slow zoom in", "gentle pan right", "slow zoom out", "gentle pan left"][i % 4],
             "mood_colour": ["sky blue", "soft purple", "sunshine yellow", "candy pink"][i % 4],
@@ -98,9 +119,39 @@ def maybe_fail_429() -> None:
         raise err
 
 
+def _key_from(prompt: str) -> str | None:
+    m = re.search(r"flat solid [a-z ]+ colour \((#[0-9A-Fa-f]{6})\)", prompt)
+    return m.group(1) if m else None
+
+
 def mock_image(prompt: str, out: Path, aspect_ratio: str) -> None:
     maybe_fail_429()
     w, h = (config.VIDEO_W, config.VIDEO_H) if aspect_ratio == "16:9" else (768, 768)
+    key = _key_from(prompt)
+    if key:   # cut-out asset: a subject on one flat key colour (like the real model is asked to draw)
+        prop = "Sticker-style prop" in prompt
+        img = Image.new("RGB", (w, h), key)
+        d = ImageDraw.Draw(img)
+        if prop:
+            d.ellipse((w * 0.2, h * 0.2, w * 0.8, h * 0.8), fill=_colour_for(prompt), outline="#333", width=8)
+        else:
+            cx, cy, rx, ry = w // 2, int(h * 0.56), int(w * 0.3), int(h * 0.36)
+            d.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill="#FFA3D7", outline="#333", width=8)
+            for dx in (-rx // 3, rx // 3):
+                d.ellipse((cx + dx - 26, cy - 60, cx + dx + 26, cy - 8), fill="white", outline="#333", width=5)
+                d.ellipse((cx + dx - 11, cy - 42, cx + dx + 11, cy - 20), fill="#333")
+            d.arc((cx - rx // 3, cy, cx + rx // 3, cy + ry // 2), 20, 160, fill="#333", width=7)
+        img.save(out)
+        return
+    if "Scene background only" in prompt:   # a background plate: sky + ground, no characters
+        base = _colour_for(prompt)
+        img = Image.new("RGB", (w, h), base)
+        d = ImageDraw.Draw(img)
+        for y in range(h):
+            d.line([(0, y), (w, y)], fill=tuple(min(255, int(c * (0.85 + 0.3 * y / h))) for c in base))
+        d.rectangle((0, int(h * 0.74), w, h), fill=(130, 205, 120))
+        img.save(out)
+        return
     img = Image.new("RGB", (w, h), _colour_for(prompt))
     d = ImageDraw.Draw(img)
     # a friendly blob "character" so motion is visible in the render

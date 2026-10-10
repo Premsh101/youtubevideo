@@ -81,3 +81,14 @@ def detect(path: Path, lo: float = 70, hi: float = 130) -> Grid:
     # near the window's middle, so shift by half a window (~46 ms) to get the true beat time
     offset = (best_off / fps + 512 / SR) % (60.0 / best_bpm)
     return Grid(bpm=best_bpm, offset=offset, method="detected")
+
+
+def onset_rate(path: Path) -> float:
+    """Distinct musical "hits" per second (drums, claps, plucks): high for a party song, low for a lullaby."""
+    on = _onset_curve(_decode(path))
+    thr = float(on.mean() + 1.5 * on.std())
+    last, n = -100, 0
+    for i in range(1, len(on) - 1):
+        if on[i] > thr and on[i] >= on[i - 1] and on[i] > on[i + 1] and i - last >= 12:   # >= 0.12 s apart
+            n, last = n + 1, i
+    return n / (len(on) / (SR / HOP))

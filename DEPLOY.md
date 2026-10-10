@@ -112,6 +112,14 @@ The page is one screen: left column = settings 1-2-3, right column = progress / 
   Gemini watches each clip once (cached), writes rhyming lyrics per language that fit the footage (≈₹5 per video,
   no image cost), and the footage is cut into ~7 s pieces and time-fitted to the song without freezing. Vertical/square
   clips get a blurred backdrop; the clips' own sound is muted; kid-safety and on-screen-text warnings show on the result.
+- *Mood*: `✨ Auto` (Gemini picks from the topic), `😴 Sleepy lullaby`, `🌿 Calm`, `🎈 Playful`, `🕺 Energetic`. One setting
+  drives the ElevenLabs style words and tempo (sleepy ≈60 bpm, music box/harp, no drums, no shouted chorus),
+  the Google voice speed/pitch, the synthesised background music, the lyric style and the picture colours. The
+  finished audio is measured (musical hits per second) and a too-busy lullaby is flagged with a one-click new take.
+  Drop your own tracks in `data/music/` with the mood in the file name (`sleepy_musicbox.mp3`) to have them picked.
+- *Hindi*: a topic typed in Hindi/Hinglish makes Hindi the original song (English follows). Hindi couplets are
+  checked by code on their Devanagari endings and repaired; a named traditional rhyme is used as is, a copyrighted
+  film song is not copied (a new rhyme on the theme is written and the result card says so).
 - *Vocals*: `🗣 Spoken rhyme` (Google TTS, ≈₹3) or `🎤 Sung song` (ElevenLabs, ≈₹25 per language;
   greyed out until `ELEVENLABS_API_KEY` is set).
 - *Output videos*: tick any languages (English, हिंदी, Urdu, Tamil, German, French, Spanish…) — each

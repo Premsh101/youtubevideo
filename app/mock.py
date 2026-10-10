@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from . import config
+from . import config, moods
 
 _RHYME_EN = [
     "Twinkle twinkle little star",
@@ -33,6 +33,26 @@ _RHYME_HI = [
 ]
 
 
+def _mock_mood(prompt: str) -> str:
+    """What Gemini would answer for "mood": the owner's choice, else a guess from the topic."""
+    m = re.search(r"Owner's chosen mood: (\w+)", prompt)
+    if m:
+        return m.group(1)
+    t = re.search(r'typed this theme: "([^"]*)"', prompt)
+    return moods.guess(t.group(1)) if t else "playful"
+
+
+def _mock_known(prompt: str) -> dict:
+    """Gemini recognising a rhyme named in the theme: a film song is flagged, a classic is used."""
+    t = re.search(r'typed this theme: "([^"]*)"', prompt)
+    theme = (t.group(1) if t else "").lower()
+    if "lakdi" in theme:
+        return {"known_rhyme": "Lakdi Ki Kathi", "copyrighted": True}
+    if "machli" in theme:
+        return {"known_rhyme": "Machli Jal Ki Rani", "copyrighted": False}
+    return {"known_rhyme": None, "copyrighted": False}
+
+
 def mock_json(prompt: str) -> dict:
     if prompt.startswith("CLIP ANALYSIS."):   # Gemini watching a clip
         dur = float(re.search(r"about (\d+) seconds", prompt).group(1))
@@ -44,7 +64,7 @@ def mock_json(prompt: str) -> dict:
     if prompt.startswith("CLIP SCRIPT."):   # lyrics for existing footage
         n = int(re.search(r"composed of (\d+) segments", prompt).group(1))
         return {"title_en": "Hop Hop Hooray", "title_hi": "उछल कूद", "description_en": "A happy hopping rhyme.", "description_hi": "एक मज़ेदार कविता।",
-                "tags": ["nursery rhyme", "kids", "hop", "बाल गीत"], "about": "A friendly character hops and waves in a sunny meadow.",
+                "mood": _mock_mood(prompt), "tags": ["nursery rhyme", "kids", "hop", "बाल गीत"], "about": "A friendly character hops and waves in a sunny meadow.",
                 "scenes": [{"index": i, "line_en": _RHYME_EN[i % len(_RHYME_EN)], "line_hi": _RHYME_HI[i % len(_RHYME_HI)],
                             "is_chorus": i in (0, n - 1) and n >= 6, "visual": f"segment {i + 1}"} for i in range(n)]}
     if prompt.startswith("JUDGE."):   # independent rhyme judge: agrees with everything unless told otherwise
@@ -110,6 +130,8 @@ def mock_json(prompt: str) -> dict:
         "description_en": "A gentle rhyme for toddlers.",
         "description_hi": "नन्हे बच्चों के लिए एक प्यारी कविता।",
         "tags": ["nursery rhyme", "toddler", "kids song", "बाल गीत"],
+        "mood": _mock_mood(prompt),
+        **_mock_known(prompt),
         "scenes": scenes,
     }
 

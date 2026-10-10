@@ -415,9 +415,13 @@ def test_rhyme_checker_and_native_lyrics_with_repair():
     assert j["status"] == "done", j.get("error")
     for lang in ("en", "hi"):
         rep = j["script"]["rhyme"][lang]
+        # one repair each: the chorus line (line 8 = line 1) does not rhyme with line 7 and has to be fixed. For Hindi
+        # the strict Devanagari check also overrules the mock's wrong Latin claim about couplet 3 (आसमान में / शान में).
         assert rep["ok"] and rep["tries"] == 1 and rep["failed"] == 0, rep
         sounds = [s[f"end_{lang}"] for s in j["script"]["scenes"]]
         assert lyrics.failing(sounds) == []
+    for a, b in lyrics.couplets(len(j["script"]["scenes"])):
+        assert lyrics.rhymes_devanagari(j["script"]["scenes"][a]["line_hi"], j["script"]["scenes"][b]["line_hi"]) is not False
     # chorus lines stay word-for-word identical
     chorus = {s["line_hi"] for s in j["script"]["scenes"] if s.get("is_chorus")}
     assert len(chorus) <= 1
@@ -688,10 +692,19 @@ def test_change_vocals_of_finished_video_keeps_pictures_and_publish_history():
     j2 = _wait(jid)
     assert j2["status"] == "done", j2.get("error")
     o = j2["outputs"]["en"]
-    assert o["vocals"] == {"mode": "tts", "voice": "male", "take": 0}
+    assert o["vocals"] == {"mode": "tts", "voice": "male", "take": 0, "mood": "playful"}
     assert o["published"]["youtube"]["url"] == "https://youtu.be/x" and o["thumbnail_choice"] == "B"
     assert j2["keyframes"] == kf and not j2["cost"]["by_kind"].get("image")   # no new pictures paid
     assert (config.OUTPUT_DIR / jid / o["video"]).exists()
+
+    # same voice, new mood: a different audio (the energetic tempo), nothing else changes
+    assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "tts", "voice": "male", "mood": "playful"}).status_code == 409
+    assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "tts", "voice": "male", "mood": "energetic"}).json()["ok"]
+    jm = _wait(jid)
+    assert jm["status"] == "done" and jm["outputs"]["en"]["vocals"]["mood"] == "energetic"
+    assert jm["timelines"]["en"]["beats"]["bpm"] == 108 if "beats" in jm["timelines"]["en"] else True
+    assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "tts", "voice": "male", "mood": "same"}).json()["ok"]
+    assert _wait(jid)["outputs"]["en"]["vocals"]["mood"] == "playful"
 
     # spoken -> sung, then a new take of the song (a different file, i.e. a paid re-compose)
     assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "sung", "voice": "female"}).json()["ok"]
@@ -703,3 +716,73 @@ def test_change_vocals_of_finished_video_keeps_pictures_and_publish_history():
     j4 = _wait(jid)
     assert j4["status"] == "done" and j4["outputs"]["en"]["vocals"]["take"] == 1
     assert len(list((config.CACHE_DIR / "songs").glob("*.mp3"))) == n + 1
+
+
+def test_mood_drives_music_voice_lyrics_and_can_be_overridden():
+    from app import elevenlabs, moods, tts
+    # unit: a lullaby asks ElevenLabs for soft slow music with no drums, and has no shouted chorus
+    scenes = [{"line_en": "Sleep little star", "is_chorus": i == 0} for i in range(4)]
+    plan = elevenlabs.build_plan(scenes, [8.0] * 4, "en", "2d", "female", "sleepy")
+    c0 = plan["chunks"][0]
+    assert "60 bpm" in c0["positive_styles"] and "music box" in c0["positive_styles"]
+    assert "drums" in c0["negative_styles"] and "disco" in c0["negative_styles"]
+    assert c0["text"].startswith("[Lullaby]") and "softly" in c0["text"] and "energetic hook" not in c0["positive_styles"]
+    party = elevenlabs.build_plan(scenes, [8.0] * 4, "en", "2d", "female", "energetic")["chunks"][0]
+    assert "108 bpm" in party["positive_styles"] and party["text"].startswith("[Chorus]")
+    for mood in ("sleepy", "calm", "playful", "energetic"):      # the chosen voice is never lost, whatever the mood
+        male = elevenlabs.build_plan(scenes, [8.0] * 4, "en", "2d", "male", mood)["chunks"][0]["positive_styles"]
+        assert any("male" in w and "female" not in w for w in male), (mood, male)
+    # the Google voice is slower and lower for a lullaby
+    assert 'rate="74%"' in tts._ssml("hush", False, "sleepy") and 'rate="94%"' in tts._ssml("hop", False, "energetic")
+    assert moods.guess("a bedtime lullaby") == "sleepy" and moods.guess("dance party") == "energetic"
+    assert moods.resolve("playful", "sleepy") == "playful" and moods.resolve("auto", "sleepy") == "sleepy"
+
+    # end to end: Auto picks sleepy from the topic; an explicit choice wins
+    body = {"mode": "2d", "engine": "images", "languages": ["en"], "vocals": "sung", "topic": "a bedtime lullaby for the moon", "target_seconds": 30}
+    j = _wait(client.post("/api/jobs", json=body).json()["id"])
+    assert j["status"] == "done", j.get("error")
+    assert j["script"]["mood"] == "sleepy" and j["mood"] == "sleepy"
+    assert j["outputs"]["en"]["vocals"]["mood"] == "sleepy" and "mood_check" in j["outputs"]["en"]
+    j2 = _wait(client.post("/api/jobs", json={**body, "mood": "energetic"}).json()["id"])
+    assert j2["status"] == "done" and j2["script"]["mood"] == "energetic" and j2["outputs"]["en"]["vocals"]["mood"] == "energetic"
+    assert any(m["id"] == "sleepy" for m in client.get("/api/config").json()["moods"])
+
+
+def test_hindi_rhymes_are_checked_by_code_and_hindi_themes_lead():
+    from app import lyrics, presets, script_gen
+    good = [("मछली जल की रानी है", "जीवन उसका पानी है"), ("नन्हा तारा", "कितना प्यारा"), ("ऊँचे आसमान में", "चमके शान में"),
+            ("मेरा घर", "तुझे डर"), ("एक दिन", "गिनो तीन"), ("सूरज ढल जाता है", "अँधेरा छा जाता है"),
+            ("हाथी राजा कहाँ चले", "सूँड हिलाते कहाँ चले"), ("चंदा मामा दूर के", "पुए पकाएँ बूर के")]
+    good += [("तितली उड़ी, बस पे चढ़ी", "सीट न मिली तो रोने लगी"), ("आजा मेरे पास", "हट बदमाश"), ("कहाँ गए थे", "सो रहे थे")]
+    bad = [("वो चलता है", "वो गाती है"), ("एक कली", "एक रानी"), ("घर चलो", "खाना खाओ"), ("मेरा घर", "मेरी माँ")]
+    for a, b in good:
+        assert lyrics.rhymes_devanagari(a, b) is True, (a, b)
+    for a, b in bad:
+        assert lyrics.rhymes_devanagari(a, b) is False, (a, b)
+    assert lyrics.rhymes_devanagari("star", "are") is None           # not Devanagari: the other checks decide
+    # romanised Hindi is recognised as Hindi; plain English is not
+    assert lyrics.detect_language("lakdi ki kathi kathi pe ghoda") == "hi"
+    assert lyrics.detect_language("brushing teeth with a happy duck") == "en"
+    assert lyrics.source_language({"topic": "machli jal ki rani"}) == ("hi", False)
+    # the prompts: a named rhyme is recognised, Hindi leads, and Hindi gets its own rhyme rules
+    p = script_gen.build_prompt("lakdi ki kathi kathi pe ghoda", None, [], "2d", 8)
+    assert "HINDI lines FIRST" in p and "copyrighted" in p and "तुकबंदी" in p
+    assert "HINDI lines FIRST" not in script_gen.build_prompt("brushing teeth", None, [], "2d", 8)
+    assert "तुकबंदी" in lyrics._write_prompt([{"line_en": "x", "visual": ""}] * 2, "hi", "line_en", None, False)
+    assert "तुकबंदी" not in lyrics._write_prompt([{"line_en": "x", "visual": ""}] * 2, "de", "line_en", None, False)
+    for pid in ("titli-udi", "hathi-raja"):
+        pr = presets.get(pid)
+        lines = [x.strip() for x in pr["poem"].splitlines() if x.strip()]
+        for a, b in lyrics.couplets(len(lines)):
+            assert lyrics.rhymes_devanagari(lines[a], lines[b]), (pid, lines[a], lines[b])
+
+    # end to end: a Hinglish theme naming a film song -> flagged as copyrighted, Hindi leads, Hindi couplets rhyme
+    body = {"mode": "2d", "engine": "images", "languages": ["hi", "en"], "vocals": "tts",
+            "topic": "lakdi ki kathi kathi pe ghoda", "target_seconds": 30}
+    j = _wait(client.post("/api/jobs", json=body).json()["id"])
+    assert j["status"] == "done", j.get("error")
+    s = j["script"]
+    assert s["known_rhyme"] == "Lakdi Ki Kathi" and s["copyrighted"] is True and s["lead_lang"] == "hi"
+    assert s["rhyme"]["hi"]["ok"] and s["rhyme"]["en"]["ok"]
+    for a, b in lyrics.couplets(len(s["scenes"])):   # (a mock-repaired line is Latin text -> "not applicable")
+        assert lyrics.rhymes_devanagari(s["scenes"][a]["line_hi"], s["scenes"][b]["line_hi"]) is not False

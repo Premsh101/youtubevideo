@@ -387,7 +387,9 @@ class Job:
         name = languages.name(lang)
         scenes = self.state["script"]["scenes"]
         lead = self._voice_lead()
-        if self.params.get("vocals") == "sung":
+        vocal = self._vocal(lang)
+        previous = dict((self.state.get("outputs") or {}).get(lang) or {})
+        if vocal["mode"] == "sung":
             self.step(f"Composing the {name} song", progress)
             natural = self._natural_lengths()
             if natural:   # footage keeps its own length; the song is composed to it
@@ -395,7 +397,8 @@ class Job:
             else:
                 per = max(MIN_SCENE_SEC, int(self.params.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
                 planned = render.snap_to_bars([per] * len(scenes), self._xfade(), toddler.MUSIC["bpm"])
-            song = elevenlabs.compose(scenes, planned, lang, self.params.get("mode", "2d"), self.ledger)
+            song = elevenlabs.compose(scenes, planned, lang, self.params.get("mode", "2d"), self.ledger,
+                                      voice=vocal["voice"], take=vocal["take"])
             self.step(f"Finding where each {name} line is sung", progress + 0.05)
             durations, starts, total, line_t, method = self._timeline_sung(lang, song, planned)
             voices = [{"path": None, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus")),
@@ -403,7 +406,7 @@ class Job:
                       for i, s in enumerate(scenes)]
         else:
             self.step(f"Recording {name} narration", progress)
-            voices = tts.synthesize_scenes(scenes, lang, self.ledger)
+            voices = tts.synthesize_scenes(scenes, lang, self.ledger, voice=vocal["voice"])
             durations, starts, total = self._timeline_spoken(voices)
             song, method = None, "exact"
         self.state.setdefault("timelines", {})[lang] = {
@@ -428,10 +431,18 @@ class Job:
         self.state["outputs"][lang] = {
             "video": final.name, "video_clean": final.name, "lyrics_on_screen": False,
             "captions": srt.name, "thumbnail": thumb.name,
-            "duration": round(total, 1), "language": name, "sync": method,
+            "duration": round(total, 1), "language": name, "sync": method, "vocals": vocal,
             **meta, "youtube": None,
         }
-        self.state["outputs"][lang]["lyrics_on_screen"] = bool(self.params.get("lyrics_on_screen", True))
+        for k in ("youtube", "published", "thumbnail_choice"):   # a new voice must not forget what was already published
+            if previous.get(k) is not None:
+                self.state["outputs"][lang][k] = previous[k]
+        if "lyrics_on_screen" in previous:
+            self.state["outputs"][lang]["lyrics_on_screen"] = previous["lyrics_on_screen"]
+        for k in ("title", "description", "tags", "hashtags", "title_en"):   # keep the text you may have edited/published
+            if previous.get(k):
+                self.state["outputs"][lang][k] = previous[k]
+        self.state["outputs"][lang].setdefault("lyrics_on_screen", bool(self.params.get("lyrics_on_screen", True)))
         self.step(f"Adding {name} lyrics & logo", progress + 0.28)
         self._rebuild_output(lang)
 
@@ -556,6 +567,34 @@ class Job:
 
     def add_language(self, lang: str) -> None:
         self.run(lambda: self._add_language(lang))
+
+    def _vocal(self, lang: str) -> dict:
+        """How this language is voiced: spoken (Google) or sung (ElevenLabs), female/male voice, and a 'take'
+        number (a new take of a sung song is a fresh composition). Defaults to the video's own setting."""
+        v = (self.state.get("vocals") or {}).get(lang) or {}
+        return {"mode": v.get("mode") or self.params.get("vocals", "tts"), "voice": v.get("voice") or "female",
+                "take": int(v.get("take") or 0)}
+
+    def _change_vocals(self, lang: str, mode: str, voice: str, take: int) -> None:
+        if lang not in (self.state.get("outputs") or {}):
+            raise RuntimeError(f"There is no {lang} version of this video yet")
+        self.state.setdefault("vocals", {})[lang] = {"mode": mode, "voice": voice, "take": take}
+        self._add_language(lang)
+
+    def change_vocals(self, lang: str, mode: str, voice: str, take: int) -> None:
+        """Re-voice one language of a finished video. Pictures and lyrics are reused; if it fails the old
+        video stays as it was."""
+        old = dict((self.state.get("vocals") or {}).get(lang) or {})
+        def go():
+            try:
+                self._change_vocals(lang, mode, voice, take)
+            except BaseException:
+                if old:
+                    self.state["vocals"][lang] = old
+                else:
+                    self.state.get("vocals", {}).pop(lang, None)
+                raise
+        self.run(go)
 
 
 def delete_job(job_id: str) -> None:

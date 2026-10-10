@@ -177,7 +177,7 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
    </details></div>
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
   <button class="small" onclick="setLyrics('${j.id}','${lang}',${o.lyrics_on_screen?'false':'true'})">${o.lyrics_on_screen?'🚫 Remove on-screen lyrics':'🔤 Add on-screen lyrics'}</button>
-</div>${pubBox(j,lang,o)}</div>`).join('');
+</div>${vocalsBox(j,lang,o)}${pubBox(j,lang,o)}</div>`).join('');
  c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
   ${(j.cast||[]).length?`<div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>`:''}
   ${((j.clips_plan||{}).warnings||[]).length?`<div class="warnbox" style="background:#fff3c4;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:13px">⚠ <b>Check your footage before publishing:</b><ul style="margin:4px 0 0 18px;padding:0">${j.clips_plan.warnings.map(w=>`<li><b>${esc(w.clip)}</b>: ${esc(w.note)}</li>`).join('')}</ul></div>`:''}
@@ -208,6 +208,16 @@ function thumbBox(j,lang,o){const t=o.thumbnails||[];
   <div style="font-size:12px;display:flex;justify-content:space-between;align-items:center"><span>${on?'✓ ':''}${esc(x.label)}</span><a href="/api/jobs/${j.id}/files/${x.file}?download=1" style="color:inherit" title="Download">⬇</a></div></div>`}).join('')}</div></div>`}
 async function pickThumb(id,lang,choice){try{await api(`/api/jobs/${id}/thumbnail/${lang}/${choice}`,{method:'POST'});render(await api('/api/jobs/'+id))}catch(e){alert(e.message)}}
 async function makeThumbs(id,lang,btn){btn.disabled=true;btn.textContent='Creating…';try{await api(`/api/jobs/${id}/thumbnails?lang=${lang}`,{method:'POST'});render(await api('/api/jobs/'+id))}catch(e){alert(e.message);btn.disabled=false;btn.textContent='🖼 Create 2 thumbnail options (free)'}}
+function vocalsBox(j,lang,o){const v=o.vocals||{mode:(j.params||{}).vocals||'tts',voice:'female'};const id=esc(JSON.stringify(j.id)),l=esc(JSON.stringify(lang));
+ const opt=(val,txt)=>`<option value="${val}"${val===v.mode+':'+v.voice?' selected':''}>${txt}</option>`;
+ return `<details style="margin:6px 0"><summary style="cursor:pointer;font-size:13px">🎙 Change vocals <span style="color:#777">(now: ${v.mode==='sung'?'🎤 sung':'🗣 spoken'} · ${v.voice==='male'?'male':'female'})</span></summary>
+  <div class="row" style="margin-top:6px"><select id="voc_${lang}" style="width:auto;flex:1">${opt('tts:female','🗣 Spoken · female (≈₹3)')}${opt('tts:male','🗣 Spoken · male (≈₹3)')}${opt('sung:female','🎤 Sung · female (≈₹25)')}${opt('sung:male','🎤 Sung · male (≈₹25)')}</select>
+  <label style="font-size:13px"><input type="checkbox" id="voct_${lang}"> new take (sung: a different song)</label>
+  <button class="small" onclick="changeVocals(${id},${l})">🎙 Re-voice</button></div>
+  <div class="est" style="margin:4px 0 0">Pictures and lyrics are reused; only the new voice/song is paid for. The current video stays until the new one is ready; your publish history is kept.</div></details>`}
+async function changeVocals(id,lang){const [mode,voice]=$('#voc_'+lang).value.split(':'),take=$('#voct_'+lang).checked;
+ if(!confirm(`Re-voice the ${LNAME(lang)} version as ${mode==='sung'?'a sung song':'a spoken rhyme'} (${voice})?\n\nOnly the new audio is paid for; pictures are reused.${mode==='sung'?'\nSung ≈ ₹25 per language.':''}`))return;
+ try{await api(`/api/jobs/${id}/vocals/${lang}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,voice,new_take:take})});watch(id)}catch(e){alert(e.message)}}
 function pubBox(j,lang,o){const pub=o.published||{};if(o.youtube&&!pub.youtube)pub.youtube={status:'done',...o.youtube};
  const ytOk=!!(SOC.youtube.channels[lang]||SOC.youtube.channels.default),mOk=!!SOC.meta.connected,igOk=!!SOC.meta.instagram;
  const avail={youtube:ytOk,youtube_short:ytOk,facebook:mOk,instagram:igOk};

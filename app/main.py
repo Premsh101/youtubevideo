@@ -177,6 +177,31 @@ def api_add_language(job_id: str, lang: str) -> dict:
     return {"ok": True, "job": job_id, "language": lang}
 
 
+class VocalsIn(BaseModel):
+    mode: Literal["tts", "sung"]
+    voice: Literal["female", "male"] = "female"
+    new_take: bool = False       # sung only: compose a different song even if nothing else changed
+
+
+@app.post("/api/jobs/{job_id}/vocals/{lang}")
+def api_change_vocals(job_id: str, lang: str, body: VocalsIn) -> dict:
+    """Re-voice one language of a finished video (spoken <-> sung, female/male, new take). Pictures and
+    lyrics are reused; only the new voice/song is paid for."""
+    if body.mode == "sung" and not elevenlabs.is_configured():
+        raise HTTPException(400, "Sung vocals need ELEVENLABS_API_KEY on the server")
+    job = _load_idle_job(job_id)
+    if lang not in (job.state.get("outputs") or {}):
+        raise HTTPException(404, f"no {lang} version of this video")
+    cur = job._vocal(lang)
+    take = cur["take"] + 1 if body.new_take else (cur["take"] if body.mode == cur["mode"] else 0)
+    if (body.mode, body.voice, take) == (cur["mode"], cur["voice"], cur["take"]):
+        raise HTTPException(409, "that is already how this language is voiced; pick a different voice or tick 'new take'")
+    _jobs[job_id] = job
+    threading.Thread(target=job.change_vocals, args=(lang, body.mode, body.voice, take), daemon=True,
+                     name=f"vocals-{job_id}-{lang}").start()
+    return {"ok": True, "job": job_id, "language": lang}
+
+
 def _load_idle_job(job_id: str) -> pipeline.Job:
     live = _jobs.get(job_id)
     if live and live.state["status"] in ("running", "waiting", "queued"):

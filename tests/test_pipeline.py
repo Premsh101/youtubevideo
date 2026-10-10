@@ -665,3 +665,41 @@ def test_clips_video_end_to_end_reuse_and_add_language(tmp_path):
     de = config.OUTPUT_DIR / j2["id"] / j3["outputs"]["de"]["video_main"]
     assert abs(tts_dur(de) - j3["timelines"]["de"]["total"]) < 0.1
     assert j3["script"]["rhyme"]["de"]["ok"]
+
+
+def test_change_vocals_of_finished_video_keeps_pictures_and_publish_history():
+    body = {"mode": "2d", "engine": "images", "languages": ["en"], "vocals": "tts", "preset": "machli", "target_seconds": 30}
+    job = client.post("/api/jobs", json=body).json()
+    j = _wait(job["id"])
+    assert j["status"] == "done", j.get("error")
+    jid = job["id"]
+    kf = list(j["keyframes"])
+    assert j["cost"]["by_kind"].get("image")   # the first run drew the pictures
+    # pretend it was published, and chose thumbnail B: a new voice must not forget either
+    jf = config.OUTPUT_DIR / jid / "job.json"
+    d = __import__("json").loads(jf.read_text())
+    d["outputs"]["en"]["published"] = {"youtube": {"status": "done", "url": "https://youtu.be/x"}}
+    d["outputs"]["en"]["thumbnail_choice"] = "B"
+    jf.write_text(__import__("json").dumps(d))
+
+    assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "tts", "voice": "female"}).status_code == 409  # unchanged
+    assert client.post(f"/api/jobs/{jid}/vocals/de", json={"mode": "tts", "voice": "male"}).status_code == 404
+    assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "tts", "voice": "male"}).json()["ok"]
+    j2 = _wait(jid)
+    assert j2["status"] == "done", j2.get("error")
+    o = j2["outputs"]["en"]
+    assert o["vocals"] == {"mode": "tts", "voice": "male", "take": 0}
+    assert o["published"]["youtube"]["url"] == "https://youtu.be/x" and o["thumbnail_choice"] == "B"
+    assert j2["keyframes"] == kf and not j2["cost"]["by_kind"].get("image")   # no new pictures paid
+    assert (config.OUTPUT_DIR / jid / o["video"]).exists()
+
+    # spoken -> sung, then a new take of the song (a different file, i.e. a paid re-compose)
+    assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "sung", "voice": "female"}).json()["ok"]
+    j3 = _wait(jid)
+    assert j3["status"] == "done", j3.get("error")
+    assert j3["outputs"]["en"]["vocals"]["mode"] == "sung" and "sung" in j3["cost"]["by_kind"]
+    n = len(list((config.CACHE_DIR / "songs").glob("*.mp3")))
+    assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "sung", "voice": "female", "new_take": True}).json()["ok"]
+    j4 = _wait(jid)
+    assert j4["status"] == "done" and j4["outputs"]["en"]["vocals"]["take"] == 1
+    assert len(list((config.CACHE_DIR / "songs").glob("*.mp3"))) == n + 1

@@ -33,6 +33,10 @@ PRESETS = [
      "poem": "आलू कचालू बेटा कहाँ गए थे?\nबंदर की झोपड़ी में सो रहे थे।\nबंदर ने लात मारी रो रहे थे,\nमम्मी ने प्यार किया हँस रहे थे।"},
     {"id": "ek-mota-hathi", "title": "Ek Mota Hathi", "lang": "hi",
      "poem": "एक मोटा हाथी झूम के चला,\nमकड़ी के जाले में जा के फँसा।\nएक मोटा हाथी, दो मोटे हाथी,\nतीन मोटे हाथी झूम के चले।"},
+    {"id": "titli-udi", "title": "Titli Udi", "lang": "hi",
+     "poem": "तितली उड़ी, बस पे चढ़ी,\nसीट न मिली तो रोने लगी।\nड्राइवर बोला आजा मेरे पास,\nतितली बोली हट बदमाश।"},
+    {"id": "hathi-raja", "title": "Hathi Raja Kahan Chale", "lang": "hi",
+     "poem": "हाथी राजा कहाँ चले?\nसूँड हिलाते कहाँ चले?\nमेरे घर भी आओ ना,\nहलवा पूरी खाओ ना।\nआओ बैठो कुर्सी पर,\nकुर्सी बोली चर चर चर।"},
     {"id": "abc-phonics", "title": "ABC Phonics Song (original)", "lang": "en",
      "poem": None, "topic": "learning letters A to G with a word for each letter (A apple, B ball, C cat...) in a playful phonics song"},
 ]

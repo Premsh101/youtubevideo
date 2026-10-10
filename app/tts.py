@@ -13,7 +13,7 @@ import subprocess
 import wave
 from pathlib import Path
 
-from . import config, languages, retry, toddler
+from . import config, languages, moods, retry, toddler
 from .costs import CostLedger
 
 _tts_client = None
@@ -35,20 +35,22 @@ def media_duration(path: Path) -> float:
     return float(json.loads(out)["format"]["duration"])
 
 
-def _ssml(text: str, chorus: bool = False) -> str:
-    """Sing-song delivery: chorus lines brighter/higher like a sung hook, verses a bit slower."""
-    v = toddler.VOICE
+def _ssml(text: str, chorus: bool = False, mood: str = "playful") -> str:
+    """Sing-song delivery: chorus lines brighter/higher like a sung hook, verses a bit slower.
+    The video's mood sets the base speed and pitch (a lullaby is slow and low, a dance rhyme brisk and bright)."""
+    md = moods.get(mood)
     safe = text.replace("&", "&amp;").replace("<", "&lt;")
-    pitch = v["pitch_semitones"] + (2.0 if chorus else 0.0)
-    rate = v["speaking_rate"] + (0.06 if chorus else 0.0)
+    pitch = md["pitch"] + (md["chorus_pitch"] if chorus else 0.0)
+    rate = md["rate"] + (md["chorus_rate"] if chorus else 0.0)
     return (f'<speak><prosody rate="{int(rate * 100)}%" pitch="+{pitch:.1f}st">'
             f'{safe}</prosody></speak>')
 
 
-def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = False, gender: str = "female") -> Path:
+def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = False, gender: str = "female",
+                    mood: str = "playful") -> Path:
     male = gender == "male"
     voice = None if male else languages.tts_voice(lang)
-    key = hashlib.sha256(f"{lang}|{voice}|{gender if male else ''}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}".encode()).hexdigest()[:24]
+    key = hashlib.sha256(f"{lang}|{voice}|{gender if male else ''}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}{"" if mood == "playful" else "|" + mood}".encode()).hexdigest()[:24]
     out = config.CACHE_DIR / "tts" / f"{key}.wav"
     if out.exists():
         ledger.tts(f"{lang} line", len(text), cached=True)
@@ -62,7 +64,7 @@ def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = Fal
 
     from google.cloud import texttospeech as t
     resp = retry.guarded("tts", lambda: _client().synthesize_speech(
-        input=t.SynthesisInput(ssml=_ssml(text, chorus)),
+        input=t.SynthesisInput(ssml=_ssml(text, chorus, mood)),
         voice=(t.VoiceSelectionParams(language_code=languages.tts_locale(lang), name=voice) if voice else
                t.VoiceSelectionParams(language_code=languages.tts_locale(lang), ssml_gender=t.SsmlVoiceGender.FEMALE)),
         audio_config=t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000),
@@ -103,11 +105,12 @@ def trimmed(path: Path) -> Path:
     return out
 
 
-def synthesize_scenes(scenes: list[dict], lang: str, ledger: CostLedger, voice: str = "female") -> list[dict]:
+def synthesize_scenes(scenes: list[dict], lang: str, ledger: CostLedger, voice: str = "female",
+                      mood: str = "playful") -> list[dict]:
     """Return [{path, duration}] aligned with scenes."""
     key = f"line_{lang}"
     out = []
     for s in scenes:
-        p = trimmed(synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus")), gender=voice))
+        p = trimmed(synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus")), gender=voice, mood=mood))
         out.append({"path": str(p), "duration": media_duration(p), "text": s[key], "chorus": bool(s.get("is_chorus"))})
     return out

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, toddler
+from . import config, moods, toddler
 
 SR = 44100
 
@@ -34,10 +34,10 @@ def _pad(freqs: list[float], dur: float, sr: int = SR) -> np.ndarray:
     return env * sig / (len(freqs) * 1.3)
 
 
-def synth_lullaby(seconds: float, seed: str, out: Path) -> Path:
+def synth_lullaby(seconds: float, seed: str, out: Path, mood: str = "playful") -> Path:
     rng = np.random.default_rng(int(hashlib.md5(seed.encode()).hexdigest()[:8], 16))
-    m = toddler.MUSIC
-    beat = 60.0 / m["bpm"]
+    m, md = toddler.MUSIC, moods.get(mood)
+    beat = 60.0 / md["bpm"]
     root = m["key_root_hz"]
     scale = m["scale"]
     n_total = int(SR * (seconds + 2))
@@ -56,12 +56,13 @@ def synth_lullaby(seconds: float, seed: str, out: Path) -> Path:
         mix[s0:s0 + len(seg)] += 0.22 * seg[: n_total - s0]
         # melody: 4 bell notes per bar on the beat, stepwise random walk over pentatonic
         deg = int(rng.integers(0, len(scale)))
-        for b in range(4):
+        per_bar = md["melody_notes"]
+        for b in range(per_bar):
             deg = int(np.clip(deg + rng.integers(-1, 2), 0, len(scale) - 1))
             octave = 1 if rng.random() < 0.8 else 2
             f = root * octave * 2 ** (scale[deg] / 12)
-            note = _bell(f, beat * 1.6)
-            n0 = int((pos + b * beat) * SR)
+            note = _bell(f, beat * (4 / per_bar) * 1.6)
+            n0 = int((pos + b * (4 / per_bar) * beat) * SR)
             if n0 < n_total and rng.random() < 0.85:
                 mix[n0:n0 + len(note)] += 0.18 * note[: n_total - n0]
         pos += bar
@@ -82,13 +83,14 @@ def synth_lullaby(seconds: float, seed: str, out: Path) -> Path:
     return out
 
 
-def get_music(seconds: float, seed: str) -> Path:
+def get_music(seconds: float, seed: str, mood: str = "playful") -> Path:
     tracks = sorted(p for p in config.MUSIC_DIR.iterdir() if p.suffix.lower() in {".mp3", ".wav", ".m4a", ".ogg"})
-    if tracks:
+    if tracks:   # your own tracks: one whose file name contains the mood (e.g. sleepy_music_box.mp3) is preferred
+        tracks = [t for t in tracks if mood in t.stem.lower()] or tracks
         return tracks[int(hashlib.md5(seed.encode()).hexdigest()[:4], 16) % len(tracks)]
-    key = hashlib.md5(f"{seed}|{int(seconds)}".encode()).hexdigest()[:16]
+    key = hashlib.md5(f"{seed}|{int(seconds)}{'' if mood == 'playful' else '|' + mood}".encode()).hexdigest()[:16]
     out = config.CACHE_DIR / "music" / f"{key}.wav"
     if out.exists():
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
-    return synth_lullaby(seconds, seed, out)
+    return synth_lullaby(seconds, seed, out, mood)

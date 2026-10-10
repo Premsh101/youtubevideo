@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import tts
-from . import (branding, characters, clips, cutout, config, costs, elevenlabs, languages, pipeline, presets, public_urls, publish,
+from . import (branding, characters, clips, cutout, config, costs, elevenlabs, languages, moods, pipeline, presets, public_urls, publish,
                script_gen, social, youtube)
 from .costs import CostLedger
 
@@ -63,6 +63,7 @@ def get_config() -> dict:
         "location": config.GCP_LOCATION,
         "models": {"text": config.TEXT_MODEL, "image": config.IMAGE_MODEL, "veo": config.VEO_MODEL,
                    "tts": config.TTS_VOICES},
+        "moods": [{"id": k, "label": v["label"], "bpm": v["bpm"]} for k, v in moods.MOODS.items()],
         "prices_usd": config.PRICES,
         "usd_to_inr": config.USD_TO_INR,
         "elevenlabs": elevenlabs.is_configured(),
@@ -180,6 +181,7 @@ def api_add_language(job_id: str, lang: str) -> dict:
 class VocalsIn(BaseModel):
     mode: Literal["tts", "sung"]
     voice: Literal["female", "male"] = "female"
+    mood: Literal["same", "sleepy", "calm", "playful", "energetic"] = "same"   # "same" = the video's own mood
     new_take: bool = False       # sung only: compose a different song even if nothing else changed
 
 
@@ -193,11 +195,14 @@ def api_change_vocals(job_id: str, lang: str, body: VocalsIn) -> dict:
     if lang not in (job.state.get("outputs") or {}):
         raise HTTPException(404, f"no {lang} version of this video")
     cur = job._vocal(lang)
-    take = cur["take"] + 1 if body.new_take else (cur["take"] if body.mode == cur["mode"] else 0)
-    if (body.mode, body.voice, take) == (cur["mode"], cur["voice"], cur["take"]):
-        raise HTTPException(409, "that is already how this language is voiced; pick a different voice or tick 'new take'")
+    mood = None if body.mood == "same" else body.mood
+    new_mood = mood or job._video_mood()
+    changed = (body.mode, body.voice, new_mood) != (cur["mode"], cur["voice"], cur["mood"])
+    take = cur["take"] + 1 if body.new_take else (cur["take"] if not changed else (0 if body.mode != cur["mode"] else cur["take"]))
+    if not changed and take == cur["take"]:
+        raise HTTPException(409, "that is already how this language is voiced; pick a different voice or mood, or tick 'new take'")
     _jobs[job_id] = job
-    threading.Thread(target=job.change_vocals, args=(lang, body.mode, body.voice, take), daemon=True,
+    threading.Thread(target=job.change_vocals, args=(lang, body.mode, body.voice, take, mood), daemon=True,
                      name=f"vocals-{job_id}-{lang}").start()
     return {"ok": True, "job": job_id, "language": lang}
 
@@ -251,6 +256,7 @@ class JobIn(BaseModel):
     engine: Literal["images", "veo", "cutout", "clips"] = "images"
     clips: list[str] = Field([], description="engine=clips: ids of uploaded clips, in the order they play")
     vocals: Literal["tts", "sung"] = "tts"
+    mood: Literal["auto", "sleepy", "calm", "playful", "energetic"] = "auto"   # feel of music + voice + lyrics
     languages: list[str] = ["en", "hi"]
     character_mode: Literal["auto", "library", "describe"] = "auto"
     characters: list[str] = Field([], description="library mode: ids of library characters to use")

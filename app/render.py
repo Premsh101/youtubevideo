@@ -184,14 +184,15 @@ def crossfade_concat(clips: list[Path], durations: list[float], xfade: float, ou
 
 # ------------------------------------------------------------------ audio
 def build_audio(voice_lines: list[dict], starts: list[float], total: float, music: Path, out: Path,
-                lead_in: float = 0.6) -> Path:
-    """Voice lines placed at scene starts, music ducked underneath, loudness-normalised."""
+                lead_in: float = 0.6, music_db: float | None = None, harmony: bool = True) -> Path:
+    """Voice lines placed at scene starts, music ducked underneath, loudness-normalised.
+    `harmony` = the "children singing along" layers on chorus lines (off for sleepy/calm videos)."""
     inputs = ["-i", str(music)]
     delays = []
     for i, v in enumerate(voice_lines):
         inputs += ["-i", v["path"]]
         ms = int((starts[i] + lead_in) * 1000)
-        if v.get("chorus"):
+        if v.get("chorus") and harmony:
             # cheap "children singing along" effect: two detuned copies (+3 / +5 semitones) under the lead
             delays.append(
                 f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,asplit=3[l{i}][h1{i}][h2{i}];"
@@ -202,7 +203,7 @@ def build_audio(voice_lines: list[dict], starts: list[float], total: float, musi
             delays.append(f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={ms}|{ms}[d{i}]")
     n = len(voice_lines)
     voice_mix = "".join(f"[d{i}]" for i in range(n)) + f"amix=inputs={n}:normalize=0,alimiter=limit=0.95,apad,atrim=duration={total:.3f}[voice]"
-    duck = toddler.MUSIC["duck_db"]
+    duck = toddler.MUSIC["duck_db"] if music_db is None else music_db
     fc = ";".join(delays + [
         voice_mix,
         f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,aloop=loop=-1:size=2e9,atrim=duration={total:.3f},"

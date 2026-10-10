@@ -10,7 +10,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import align, beats, branding, characters, clips, cutout, lyrics, lyrics_overlay, thumbnails, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
+from . import align, beats, branding, characters, clips, cutout, lyrics, moods, lyrics_overlay, thumbnails, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -135,7 +135,7 @@ class Job:
         # 2. poem + scene plan (EN + HI in one call)
         self.step("Writing the rhyme and scene plan with Gemini", 0.08)
         script = self.state.get("script") or script_gen.generate_script(p.get("topic"), p.get("poem"), chars, mode, engine,
-                                            int(p.get("target_seconds") or config.TARGET_SECONDS), self.ledger)
+                                            int(p.get("target_seconds") or config.TARGET_SECONDS), self.ledger, p.get("mood"))
         self.state["script"] = script
         scenes = script["scenes"]
         for lang in langs:  # en + hi come with the script; any other language is adapted by Gemini
@@ -165,7 +165,8 @@ class Job:
                 refs.append(keyframes[-1])
                 continuity = (" The LAST reference image is the previous scene: keep the same location, "
                               "art style, lighting and colour palette so the story feels continuous.")
-            prompt = (f"{style}. Dominant colour accent: {mood}. Scene: {visual}. "
+            look = moods.get(self._video_mood())["visual"]   # e.g. night-time moonlit blues for a lullaby
+            prompt = (f"{style}.{f' {look}.' if look else ''} Dominant colour accent: {mood}. Scene: {visual}. "
                       f"Characters: {char_text}.{continuity} Avoid: {toddler.NEGATIVE}.")
             kf = generate_image(prompt, self.ledger, f"keyframe {i + 1}", reference_images=refs)
             dest = self.dir / f"keyframe_{i:02}.png"
@@ -206,13 +207,13 @@ class Job:
         but there is no visible gap before the voice (that gap read as 'video first, audio late')."""
         return round(self._xfade() * 0.6, 3)
 
-    def _timeline_spoken(self, voices: list[dict]) -> tuple[list[float], list[float], float]:
+    def _timeline_spoken(self, voices: list[dict], lang: str | None = None) -> tuple[list[float], list[float], float]:
         xf, lead = self._xfade(), self._voice_lead()
         min_len = float(config.VEO_CLIP_SECONDS) if self.params.get("engine") == "veo" else MIN_SCENE_SEC
         natural = self._natural_lengths()   # your footage: never shorter than the clip piece itself (no trimming)
         durations = [max(natural[i] if natural else min_len, lead + v["duration"] + TAIL + xf) for i, v in enumerate(voices)]
         if self.params.get("engine") not in ("veo", "clips"):  # follow the music's bars
-            durations = render.snap_to_bars(durations, xf, toddler.MUSIC["bpm"])
+            durations = render.snap_to_bars(durations, xf, self._mood(lang)["bpm"])
         durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1]
@@ -284,7 +285,7 @@ class Job:
             self.save()
         plan = self.state["clips_plan"]
         self.step("Writing lyrics that fit your footage", 0.25)
-        script = self.state.get("script") or script_gen.generate_clip_script(plan["segments"], p.get("topic"), p.get("poem"), self.ledger)
+        script = self.state.get("script") or script_gen.generate_clip_script(plan["segments"], p.get("topic"), p.get("poem"), self.ledger, p.get("mood"))
         self.state["script"] = script
         self.save()
         for lang in langs:
@@ -329,12 +330,14 @@ class Job:
 
     def _beat_grid(self, lang: str, total: float, song: Path | None) -> beats.Grid:
         """When the music hits, in this language's video: known for our own lullaby, measured otherwise."""
+        bpm = self._mood(lang)["bpm"]
+        rng = {"lo": bpm * 0.75, "hi": bpm * 1.35}      # songs follow the mood's tempo roughly; a lullaby is below 70
         if song is not None:
-            return beats.detect(song)
-        music = get_music(total, self.state["script"]["title_en"])
+            return beats.detect(song, **rng)
+        music = get_music(total, self.state["script"]["title_en"], self._mood_id(lang))
         if config.CACHE_DIR / "music" in music.parents:   # our synthesised lullaby: exact tempo, starts on the beat
-            return beats.Grid(bpm=toddler.MUSIC["bpm"], offset=0.0, method="known")
-        return beats.detect(music)
+            return beats.Grid(bpm=bpm, offset=0.0, method="known")
+        return beats.detect(music, **rng)
 
     def _render_cutout(self, lang: str, durations: list[float], song: Path | None) -> Path:
         scenes = self.state["script"]["scenes"]
@@ -388,6 +391,8 @@ class Job:
         scenes = self.state["script"]["scenes"]
         lead = self._voice_lead()
         vocal = self._vocal(lang)
+        md = moods.get(vocal["mood"])
+        self.state["mood"] = self._video_mood()
         previous = dict((self.state.get("outputs") or {}).get(lang) or {})
         if vocal["mode"] == "sung":
             self.step(f"Composing the {name} song", progress)
@@ -396,9 +401,9 @@ class Job:
                 planned = [round(d * config.FPS) / config.FPS for d in natural]
             else:
                 per = max(MIN_SCENE_SEC, int(self.params.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
-                planned = render.snap_to_bars([per] * len(scenes), self._xfade(), toddler.MUSIC["bpm"])
+                planned = render.snap_to_bars([per] * len(scenes), self._xfade(), md["bpm"])
             song = elevenlabs.compose(scenes, planned, lang, self.params.get("mode", "2d"), self.ledger,
-                                      voice=vocal["voice"], take=vocal["take"])
+                                      voice=vocal["voice"], take=vocal["take"], mood=vocal["mood"])
             self.step(f"Finding where each {name} line is sung", progress + 0.05)
             durations, starts, total, line_t, method = self._timeline_sung(lang, song, planned)
             voices = [{"path": None, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus")),
@@ -406,8 +411,8 @@ class Job:
                       for i, s in enumerate(scenes)]
         else:
             self.step(f"Recording {name} narration", progress)
-            voices = tts.synthesize_scenes(scenes, lang, self.ledger, voice=vocal["voice"])
-            durations, starts, total = self._timeline_spoken(voices)
+            voices = tts.synthesize_scenes(scenes, lang, self.ledger, voice=vocal["voice"], mood=vocal["mood"])
+            durations, starts, total = self._timeline_spoken(voices, lang)
             song, method = None, "exact"
         self.state.setdefault("timelines", {})[lang] = {
             "durations": durations, "starts": starts, "total": total, "xfade": self._xfade(),
@@ -420,8 +425,9 @@ class Job:
         if song is not None:
             audio = render.song_to_track(song, total, self.dir / f"audio_{lang}.wav")
         else:
-            music = get_music(total, self.state["script"]["title_en"])
-            audio = render.build_audio(voices, starts, total, music, self.dir / f"audio_{lang}.wav", lead)
+            music = get_music(total, self.state["script"]["title_en"], vocal["mood"])
+            audio = render.build_audio(voices, starts, total, music, self.dir / f"audio_{lang}.wav", lead,
+                                       music_db=md["volume_db"], harmony=md["id"] not in ("sleepy", "calm"))
         final = render.mux(silent, audio, self.dir / f"final_{lang}.mp4")
         silent.unlink(missing_ok=True)
         srt = render.write_srt(voices, starts, self.dir / f"captions_{lang}.srt", lead)
@@ -429,9 +435,10 @@ class Job:
         self.step(f"Writing {name} title, description & hashtags", progress + 0.25)
         meta = metadata.viral_metadata(self.state["script"], lang, self.state.get("cast") or [], self.ledger)
         self.state["outputs"][lang] = {
-            "video": final.name, "video_clean": final.name, "lyrics_on_screen": False,
+            "video": final.name, "video_clean": final.name, "lyrics_on_screen": bool(self.params.get("lyrics_on_screen", True)),
             "captions": srt.name, "thumbnail": thumb.name,
             "duration": round(total, 1), "language": name, "sync": method, "vocals": vocal,
+            "mood_check": self._mood_check(song if song is not None else music, vocal["mood"]),
             **meta, "youtube": None,
         }
         for k in ("youtube", "published", "thumbnail_choice"):   # a new voice must not forget what was already published
@@ -442,7 +449,6 @@ class Job:
         for k in ("title", "description", "tags", "hashtags", "title_en"):   # keep the text you may have edited/published
             if previous.get(k):
                 self.state["outputs"][lang][k] = previous[k]
-        self.state["outputs"][lang].setdefault("lyrics_on_screen", bool(self.params.get("lyrics_on_screen", True)))
         self.step(f"Adding {name} lyrics & logo", progress + 0.28)
         self._rebuild_output(lang)
 
@@ -573,21 +579,42 @@ class Job:
         number (a new take of a sung song is a fresh composition). Defaults to the video's own setting."""
         v = (self.state.get("vocals") or {}).get(lang) or {}
         return {"mode": v.get("mode") or self.params.get("vocals", "tts"), "voice": v.get("voice") or "female",
-                "take": int(v.get("take") or 0)}
+                "take": int(v.get("take") or 0), "mood": v.get("mood") or self._video_mood()}
 
-    def _change_vocals(self, lang: str, mode: str, voice: str, take: int) -> None:
+    def _video_mood(self) -> str:
+        """The mood of the whole video: your choice, else Gemini's pick from the topic. Old videos get a guess
+        from their title (a "sleep" rhyme is sleepy), otherwise playful as before."""
+        s = self.state.get("script") or {}
+        return moods.resolve(self.params.get("mood"), s.get("mood"), " ".join([self.params.get("topic") or "", s.get("title_en") or ""]))
+
+    def _mood_id(self, lang: str | None) -> str:
+        return self._vocal(lang)["mood"] if lang else self._video_mood()
+
+    def _mood(self, lang: str | None) -> dict:
+        return moods.get(self._mood_id(lang))
+
+    def _mood_check(self, audio: Path, mood: str) -> dict:
+        """Does the finished audio really feel like the mood? Counts musical hits per second (a lullaby has few)."""
+        limit = moods.get(mood)["max_onsets"]
+        try:
+            rate = round(beats.onset_rate(audio), 2)
+        except Exception:
+            return {"mood": mood, "ok": True, "measured": False}
+        return {"mood": mood, "hits_per_second": rate, "ok": limit is None or rate <= limit, "measured": True}
+
+    def _change_vocals(self, lang: str, mode: str, voice: str, take: int, mood: str | None = None) -> None:
         if lang not in (self.state.get("outputs") or {}):
             raise RuntimeError(f"There is no {lang} version of this video yet")
-        self.state.setdefault("vocals", {})[lang] = {"mode": mode, "voice": voice, "take": take}
+        self.state.setdefault("vocals", {})[lang] = {"mode": mode, "voice": voice, "take": take, "mood": mood}
         self._add_language(lang)
 
-    def change_vocals(self, lang: str, mode: str, voice: str, take: int) -> None:
+    def change_vocals(self, lang: str, mode: str, voice: str, take: int, mood: str | None = None) -> None:
         """Re-voice one language of a finished video. Pictures and lyrics are reused; if it fails the old
         video stays as it was."""
         old = dict((self.state.get("vocals") or {}).get(lang) or {})
         def go():
             try:
-                self._change_vocals(lang, mode, voice, take)
+                self._change_vocals(lang, mode, voice, take, mood)
             except BaseException:
                 if old:
                     self.state["vocals"][lang] = old

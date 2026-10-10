@@ -435,7 +435,7 @@ class Job:
         self.step(f"Writing {name} title, description & hashtags", progress + 0.25)
         meta = metadata.viral_metadata(self.state["script"], lang, self.state.get("cast") or [], self.ledger)
         self.state["outputs"][lang] = {
-            "video": final.name, "video_clean": final.name, "lyrics_on_screen": False,
+            "video": final.name, "video_clean": final.name, "lyrics_on_screen": bool(self.params.get("lyrics_on_screen", True)),
             "captions": srt.name, "thumbnail": thumb.name,
             "duration": round(total, 1), "language": name, "sync": method, "vocals": vocal,
             "mood_check": self._mood_check(song if song is not None else music, vocal["mood"]),
@@ -449,7 +449,6 @@ class Job:
         for k in ("title", "description", "tags", "hashtags", "title_en"):   # keep the text you may have edited/published
             if previous.get(k):
                 self.state["outputs"][lang][k] = previous[k]
-        self.state["outputs"][lang].setdefault("lyrics_on_screen", bool(self.params.get("lyrics_on_screen", True)))
         self.step(f"Adding {name} lyrics & logo", progress + 0.28)
         self._rebuild_output(lang)
 

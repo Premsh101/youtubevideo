@@ -480,15 +480,10 @@ def test_cutout_engine_beats_reuse_and_add_language():
 
 
 def test_beat_detector_finds_tempo_and_phase():
-    from app import beats, music, toddler
+    from app import beats, music
     out = config.CACHE_DIR / "beat_test.wav"
-    for bpm in (92, 108):
-        old = toddler.MUSIC["bpm"]
-        toddler.MUSIC["bpm"] = bpm
-        try:
-            music.synth_lullaby(30, f"bt{bpm}", out)
-        finally:
-            toddler.MUSIC["bpm"] = old
+    for mood, bpm in (("playful", 92), ("energetic", 108)):   # the tempo comes from the mood
+        music.synth_lullaby(30, f"bt{bpm}", out, mood)
         g = beats.detect(out)
         assert abs(g.bpm - bpm) < 0.6
         per = 60 / bpm

@@ -45,17 +45,27 @@ video{width:100%;border-radius:12px;background:#000}
 <section>
  <div class="card">
   <h2>1 · What should the rhyme be about?</h2>
-  <div class="seg"><button id="srcFamous" class="on">⭐ Famous rhyme</button><button id="srcAuto">Let Gemini write it</button><button id="srcOwn">I have a poem</button></div>
+  <div class="seg"><button id="srcFamous" class="on">⭐ Famous rhyme</button><button id="srcAuto">Let Gemini write it</button><button id="srcOwn">I have a poem</button><button id="srcClips">🎞 My own clips</button></div>
   <div id="famousBox"><label>Pick a classic (public-domain versions of the most-watched rhymes)</label><select id="preset"></select></div>
   <div id="autoBox" style="display:none"><label>Topic (optional)</label><input type="text" id="topic" placeholder="e.g. brushing teeth, rainy day, counting ducks"></div>
   <div id="ownBox" style="display:none"><label>Paste your poem / rhyme (English or Hindi)</label><textarea id="poem" placeholder="Johny Johny yes papa..."></textarea></div>
 
+  <div id="clipsBox" style="display:none">
+   <label>Upload your short videos (MP4, MOV, WebM · up to 2 minutes each). Gemini watches them and writes rhyming lyrics that fit what happens; the voice or song, lyrics on screen, logo, thumbnails and publishing work as usual.</label>
+   <label class="small" style="display:block;border:2px dashed #cfd8e3;border-radius:12px;padding:14px;text-align:center;cursor:pointer;margin:0" id="clipDrop">⬆ Choose videos, or drop them here<input type="file" id="clipFiles" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv" multiple style="display:none"></label>
+   <div class="est" id="clipProg"></div>
+   <div id="clipList" style="margin-top:6px"></div>
+   <label>What are the videos about? (optional hint)</label><input type="text" id="clipTopic" placeholder="e.g. a puppy playing in the garden">
+   <label>Your own lyrics (optional): otherwise Gemini writes rhyming lyrics that fit the footage</label><textarea id="clipPoem" style="min-height:70px" placeholder="Paste a poem here to have it matched to the clips…"></textarea>
+   <div class="est" style="margin:4px 0 0">The clips' own sound is muted so the lyrics and music are clear. Videos you already made keep their own copy of the footage, so you can delete uploads any time.</div>
+  </div>
+
   <h2 style="margin-top:18px">2 · Look &amp; feel</h2>
-  <label>Animation mode</label>
+  <div id="lookBox"><label>Animation mode</label>
   <div class="seg" id="mode"><button data-v="2d">🎨 2D cartoon</button><button data-v="3d" class="on">🧊 3D rendered (like top channels)</button></div>
   <label>Motion engine</label>
   <div class="seg" id="engine"><button data-v="images" class="on">💸 Keyframes + smooth camera (cheap)</button><button data-v="cutout">🎭 Animated cut-outs (new): characters hop to the beat</button><button data-v="veo">🎬 Veo video clips (premium)</button></div>
-  <div class="est" id="engineHint" style="margin:4px 0 0"></div>
+  <div class="est" id="engineHint" style="margin:4px 0 0"></div></div>
   <label>Vocals</label>
   <div class="seg" id="vocals"><button data-v="tts" class="on">🗣 Spoken rhyme (Google TTS, ~₹3)</button><button data-v="sung">🎤 Sung song (ElevenLabs, ~₹35/lang)</button></div>
   <label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:12px"><input type="checkbox" id="lyricsOn" checked> 🔤 Show animated lyrics on screen <span class="est" style="margin:0">(big bouncy words that light up as they're sung)</span></label>
@@ -63,15 +73,16 @@ video{width:100%;border-radius:12px;background:#000}
   <label>Output videos (one separate MP4 per language, same visuals)</label>
   <div class="row" id="langs"></div>
   <div class="est" style="margin:4px 0 0">You can add more languages to a finished video later — only the voice is regenerated, visuals are reused.</div>
-  <label>Target length: <span id="lenLbl">120</span> s</label>
-  <input type="range" id="len" min="60" max="180" step="10" value="120" style="width:100%">
+  <div id="lenBox"><label>Target length: <span id="lenLbl">120</span> s</label>
+  <input type="range" id="len" min="60" max="180" step="10" value="120" style="width:100%"></div>
 
-  <h2 style="margin-top:18px">3 · Characters <span class="badge" id="charCount"></span></h2>
+  <div id="charBox"><h2 style="margin-top:18px">3 · Characters <span class="badge" id="charCount"></span></h2>
   <div class="seg" id="charMode"><button data-v="auto" class="on">✨ Let Gemini create</button><button data-v="library">📚 From library</button><button data-v="describe">✍️ Describe</button></div>
   <div id="cmAuto" class="est" style="margin:8px 0 0">Gemini picks characters that fit the rhyme — reusing ones already in your library and inventing new ones only when needed. New ones are saved to the library.</div>
   <div id="cmLibrary" style="display:none;margin-top:8px"><div class="est" style="margin:0 0 6px">Tap to select (up to 2). 🗑 removes a character from the library.</div><div class="chars" id="chars"></div></div>
   <div id="cmDescribe" style="display:none"><label>Describe your character(s)</label><textarea id="charDesc" style="min-height:80px" placeholder="e.g. A chubby baby elephant called Gappu, light blue with a red cap, loves splashing water. And his best friend, a tiny yellow chick."></textarea><div class="est" style="margin:4px 0 0">Gemini turns this into a consistent character sheet and saves it to the library for future videos.</div></div>
 
+  </div>
   <div class="est" id="est"></div>
   <button class="primary" id="go">✨ Create video</button>
  </div>
@@ -93,17 +104,38 @@ const inr=v=>'₹'+Number(v).toFixed(2);
 
 function seg(id,cb){document.querySelectorAll(id+' button').forEach(b=>b.onclick=()=>{document.querySelectorAll(id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.v)})}
 seg('#mode',v=>{mode=v;estimate()});seg('#engine',v=>{engine=v;engineHint();estimate()});seg('#charMode',v=>{charMode=v;for(const k of ['auto','library','describe'])$('#cm'+k[0].toUpperCase()+k.slice(1)).style.display=k===v?'':'none';cnt()});seg('#vocals',v=>{vocals=v;estimate()});
-function setSrc(v){src=v;for(const k of ['famous','auto','own']){$('#src'+k[0].toUpperCase()+k.slice(1)).classList.toggle('on',k===v);$('#'+k+'Box').style.display=k===v?'':'none'}}
-$('#srcFamous').onclick=()=>setSrc('famous');$('#srcAuto').onclick=()=>setSrc('auto');$('#srcOwn').onclick=()=>setSrc('own');
+function setSrc(v){src=v;for(const k of ['famous','auto','own','clips']){$('#src'+k[0].toUpperCase()+k.slice(1)).classList.toggle('on',k===v);$('#'+k+'Box').style.display=k===v?'':'none'}
+ for(const id of ['lookBox','lenBox','charBox'])$('#'+id).style.display=v==='clips'?'none':'';estimate()}
+$('#srcFamous').onclick=()=>setSrc('famous');$('#srcAuto').onclick=()=>setSrc('auto');$('#srcOwn').onclick=()=>setSrc('own');$('#srcClips').onclick=()=>{setSrc('clips');loadClips()};
 $('#len').oninput=e=>{$('#lenLbl').textContent=e.target.value;estimate()};
 let LANGS=[];const LNAME=c=>{const l=LANGS.find(x=>x.code===c);return l?`${l.name}${l.native!==l.name?' · '+l.native:''}`:c};
 
 function params(){const languages=[...document.querySelectorAll('#langs input:checked')].map(x=>x.value);
+ if(src==='clips')return{mode:'2d',engine:'clips',vocals,languages,lyrics_on_screen:$('#lyricsOn').checked,bookends:$('#bookendsOn').checked,clips:clipOrder.filter(id=>clipSel.has(id)),topic:$('#clipTopic').value.trim()||null,poem:$('#clipPoem').value.trim()||null,target_seconds:120}
  return{mode,engine,vocals,languages,lyrics_on_screen:$('#lyricsOn').checked,bookends:$('#bookendsOn').checked,character_mode:charMode,characters:charMode==='library'?[...selected]:[],character_description:charMode==='describe'?($('#charDesc').value.trim()||null):null,preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
 
 async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
- $('#est').innerHTML=`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
+ $('#est').innerHTML=src==='clips'?(e.scenes?`Estimated: <b>${e.scenes} lyric lines</b> over your footage · about <b>${inr(e.total_inr)}</b> (Gemini watching + lyrics + voice; no pictures to draw)`:'Select at least one clip'):`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
 
+let clipLib=[],clipSel=new Set(),clipOrder=[];
+async function loadClips(){clipLib=await api('/api/clips');const ids=clipLib.map(c=>c.id);
+ clipOrder=[...clipOrder.filter(id=>ids.includes(id)),...ids.filter(id=>!clipOrder.includes(id))];for(const id of [...clipSel])if(!ids.includes(id))clipSel.delete(id);renderClips();estimate()}
+function renderClips(){const by=Object.fromEntries(clipLib.map(c=>[c.id,c]));
+ $('#clipList').innerHTML=clipOrder.length?clipOrder.map((id,i)=>{const c=by[id];return `<div class="row" style="padding:6px;border:1px solid #eee;border-radius:10px;margin:4px 0;flex-wrap:nowrap;align-items:center">
+  <input type="checkbox" ${clipSel.has(id)?'checked':''} onchange="clipTick('${id}',this.checked)" title="Use in the video">
+  <img src="${c.thumb_url}" style="height:42px;border-radius:6px"><div style="flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(c.name)}</b><br><span class="est" style="margin:0">${c.duration.toFixed(1)} s · ${c.width}×${c.height}${c.width<c.height?' · vertical':''}${c.has_audio?' · sound muted':''}</span></div>
+  <button class="small" style="padding:2px 7px" ${i?'':'disabled'} onclick="clipMove(${i},-1)" title="Earlier">↑</button><button class="small" style="padding:2px 7px" ${i<clipOrder.length-1?'':'disabled'} onclick="clipMove(${i},1)" title="Later">↓</button>
+  <button class="small" style="padding:2px 7px" onclick="clipDel('${id}','${esc(c.name).replace(/'/g,'')}')" title="Delete from library">🗑</button></div>`}).join(''):'<div class="est">No clips yet — upload some above.</div>';
+ const n=clipOrder.filter(id=>clipSel.has(id)).length;$('#clipProg').textContent=n?`${n} clip(s) selected, they play in the order shown.`:$('#clipProg').textContent}
+function clipTick(id,on){on?clipSel.add(id):clipSel.delete(id);renderClips();estimate()}
+function clipMove(i,d){const j=i+d;if(j<0||j>=clipOrder.length)return;[clipOrder[i],clipOrder[j]]=[clipOrder[j],clipOrder[i]];renderClips();estimate()}
+async function clipDel(id,name){if(!confirm(`Delete “${name}” from your clip library? Videos already made keep their own copy.`))return;await api('/api/clips/'+id,{method:'DELETE'});clipSel.delete(id);loadClips()}
+async function clipUpload(files){const list=[...files];for(let k=0;k<list.length;k++){const f=list[k];$('#clipProg').textContent=`Uploading ${k+1}/${list.length}: ${f.name} …`;
+  const fd=new FormData();fd.append('file',f);try{const r=await fetch('/api/clips',{method:'POST',body:fd});if(!r.ok){let m=await r.text();try{m=JSON.parse(m).detail||m}catch(e){}throw new Error(m)}const c=await r.json();clipSel.add(c.id);clipLib.push(c);clipOrder.push(c.id);renderClips()}
+  catch(e){alert(`${f.name}: ${e.message}`)}}
+ await loadClips();$('#clipFiles').value=''}
+$('#clipFiles').onchange=e=>clipUpload(e.target.files);
+const drop=$('#clipDrop');drop.ondragover=e=>{e.preventDefault();drop.style.background='#eef7ff'};drop.ondragleave=()=>drop.style.background='';drop.ondrop=e=>{e.preventDefault();drop.style.background='';clipUpload(e.dataTransfer.files)};
 async function loadChars(){const cs=await api('/api/characters');
  $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}<br>${c.sprite_url?`<span title="Cut-out used by the Animated cut-outs engine" style="display:inline-block;vertical-align:middle;background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/10px 10px;border-radius:6px"><img src="${c.sprite_url}?t=${Date.now()}" style="height:34px;width:auto;aspect-ratio:auto"></span> <button class="small" style="padding:2px 6px" title="Cut-out looks wrong? Draw it again (about ₹3)" onclick="event.stopPropagation();redoSprite('${c.id}')">🔄</button> `:''}<button class="small" style="margin-top:4px;padding:2px 8px" onclick="event.stopPropagation();delChar('${c.id}','${c.name.replace(/'/g,'')}')">🗑</button></div>`).join(''):'<i class="est">Library is empty — use “Let Gemini create” or “Describe” first; those characters are saved here.</i>';
  document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;if(!selected.has(id)&&selected.size>=2)return alert('Up to 2 characters per video');selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');cnt()});
@@ -115,7 +147,7 @@ async function redoSprite(id){if(!confirm('Draw this character’s animated cut-
 async function delChar(id,name){if(!confirm(`Delete ${name} from the library? Videos already made are not affected.`))return;await api('/api/characters/'+id,{method:'DELETE'});selected.delete(id);loadChars()}
 
 
-$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language');if(charMode==='library'&&!p.characters.length)return alert('Pick at least one character from the library');if(charMode==='describe'&&!p.character_description)return alert('Describe your character first'); if(!confirm(`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
+$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language');if(src==='clips'&&!p.clips.length)return alert('Upload and tick at least one clip');if(charMode==='library'&&!p.characters.length)return alert('Pick at least one character from the library');if(charMode==='describe'&&!p.character_description)return alert('Describe your character first'); if(!confirm(src==='clips'?`Create a video from ${p.clips.length} of your clips in ${p.languages.join(' + ')}?`:`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
  $('#go').disabled=true;const j=await api('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(p)});watch(j.id)};
 
 function watch(id){current=id;$('#progressCard').style.display='';$('#resultCard').style.display='none';clearInterval(poll);poll=setInterval(tick,1500);tick()}
@@ -145,9 +177,10 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
    </details></div>
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
   <button class="small" onclick="setLyrics('${j.id}','${lang}',${o.lyrics_on_screen?'false':'true'})">${o.lyrics_on_screen?'🚫 Remove on-screen lyrics':'🔤 Add on-screen lyrics'}</button>
-</div>${pubBox(j,lang,o)}</div>`).join('');
+</div>${vocalsBox(j,lang,o)}${pubBox(j,lang,o)}</div>`).join('');
  c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
-  <div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>
+  ${(j.cast||[]).length?`<div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>`:''}
+  ${((j.clips_plan||{}).warnings||[]).length?`<div class="warnbox" style="background:#fff3c4;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:13px">⚠ <b>Check your footage before publishing:</b><ul style="margin:4px 0 0 18px;padding:0">${j.clips_plan.warnings.map(w=>`<li><b>${esc(w.clip)}</b>: ${esc(w.note)}</li>`).join('')}</ul></div>`:''}
   <div class="out">${outs}</div>
 
   <div class="kf">${(j.keyframes||[]).map(k=>`<img src="/api/jobs/${j.id}/files/${k}">`).join('')}</div>
@@ -175,6 +208,16 @@ function thumbBox(j,lang,o){const t=o.thumbnails||[];
   <div style="font-size:12px;display:flex;justify-content:space-between;align-items:center"><span>${on?'✓ ':''}${esc(x.label)}</span><a href="/api/jobs/${j.id}/files/${x.file}?download=1" style="color:inherit" title="Download">⬇</a></div></div>`}).join('')}</div></div>`}
 async function pickThumb(id,lang,choice){try{await api(`/api/jobs/${id}/thumbnail/${lang}/${choice}`,{method:'POST'});render(await api('/api/jobs/'+id))}catch(e){alert(e.message)}}
 async function makeThumbs(id,lang,btn){btn.disabled=true;btn.textContent='Creating…';try{await api(`/api/jobs/${id}/thumbnails?lang=${lang}`,{method:'POST'});render(await api('/api/jobs/'+id))}catch(e){alert(e.message);btn.disabled=false;btn.textContent='🖼 Create 2 thumbnail options (free)'}}
+function vocalsBox(j,lang,o){const v=o.vocals||{mode:(j.params||{}).vocals||'tts',voice:'female'};const id=esc(JSON.stringify(j.id)),l=esc(JSON.stringify(lang));
+ const opt=(val,txt)=>`<option value="${val}"${val===v.mode+':'+v.voice?' selected':''}>${txt}</option>`;
+ return `<details style="margin:6px 0"><summary style="cursor:pointer;font-size:13px">🎙 Change vocals <span style="color:#777">(now: ${v.mode==='sung'?'🎤 sung':'🗣 spoken'} · ${v.voice==='male'?'male':'female'})</span></summary>
+  <div class="row" style="margin-top:6px"><select id="voc_${lang}" style="width:auto;flex:1">${opt('tts:female','🗣 Spoken · female (≈₹3)')}${opt('tts:male','🗣 Spoken · male (≈₹3)')}${opt('sung:female','🎤 Sung · female (≈₹25)')}${opt('sung:male','🎤 Sung · male (≈₹25)')}</select>
+  <label style="font-size:13px"><input type="checkbox" id="voct_${lang}"> new take (sung: a different song)</label>
+  <button class="small" onclick="changeVocals(${id},${l})">🎙 Re-voice</button></div>
+  <div class="est" style="margin:4px 0 0">Pictures and lyrics are reused; only the new voice/song is paid for. The current video stays until the new one is ready; your publish history is kept.</div></details>`}
+async function changeVocals(id,lang){const [mode,voice]=$('#voc_'+lang).value.split(':'),take=$('#voct_'+lang).checked;
+ if(!confirm(`Re-voice the ${LNAME(lang)} version as ${mode==='sung'?'a sung song':'a spoken rhyme'} (${voice})?\n\nOnly the new audio is paid for; pictures are reused.${mode==='sung'?'\nSung ≈ ₹25 per language.':''}`))return;
+ try{await api(`/api/jobs/${id}/vocals/${lang}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,voice,new_take:take})});watch(id)}catch(e){alert(e.message)}}
 function pubBox(j,lang,o){const pub=o.published||{};if(o.youtube&&!pub.youtube)pub.youtube={status:'done',...o.youtube};
  const ytOk=!!(SOC.youtube.channels[lang]||SOC.youtube.channels.default),mOk=!!SOC.meta.connected,igOk=!!SOC.meta.instagram;
  const avail={youtube:ytOk,youtube_short:ytOk,facebook:mOk,instagram:igOk};

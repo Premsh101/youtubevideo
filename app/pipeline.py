@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import time
 import traceback
 import uuid
 from pathlib import Path
 
-from . import align, beats, branding, characters, cutout, lyrics, lyrics_overlay, thumbnails, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
+from . import align, beats, branding, characters, clips, cutout, lyrics, lyrics_overlay, thumbnails, config, elevenlabs, languages, metadata, presets, render, retry, script_gen, toddler, tts
 from .costs import CostLedger
 from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
@@ -98,6 +99,8 @@ class Job:
                 return
 
     def _run(self) -> None:
+        if self.params.get("engine") == "clips":   # footage the user uploaded: no drawing, lyrics are written to fit it
+            return self._run_clips()
         p = self.params
         mode = p.get("mode", "2d")
         engine = p.get("engine", "images")
@@ -195,7 +198,7 @@ class Job:
 
     def _xfade(self) -> float:
         """Cross-fade length, a whole number of frames (so scene starts stay on frame boundaries)."""
-        xf = 0.4 if self.params.get("engine") == "veo" else config.CROSSFADE_SEC
+        xf = 0.4 if self.params.get("engine") in ("veo", "clips") else config.CROSSFADE_SEC   # short fades keep real footage on screen
         return round(xf * config.FPS) / config.FPS
 
     def _voice_lead(self) -> float:
@@ -206,8 +209,9 @@ class Job:
     def _timeline_spoken(self, voices: list[dict]) -> tuple[list[float], list[float], float]:
         xf, lead = self._xfade(), self._voice_lead()
         min_len = float(config.VEO_CLIP_SECONDS) if self.params.get("engine") == "veo" else MIN_SCENE_SEC
-        durations = [max(min_len, lead + v["duration"] + TAIL + xf) for v in voices]
-        if self.params.get("engine") != "veo":  # follow the music's bars
+        natural = self._natural_lengths()   # your footage: never shorter than the clip piece itself (no trimming)
+        durations = [max(natural[i] if natural else min_len, lead + v["duration"] + TAIL + xf) for i, v in enumerate(voices)]
+        if self.params.get("engine") not in ("veo", "clips"):  # follow the music's bars
             durations = render.snap_to_bars(durations, xf, toddler.MUSIC["bpm"])
         durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
@@ -229,6 +233,86 @@ class Job:
         durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1], line_t, method
+
+    # ------------------------------------------------------------ your own clips
+    def _natural_lengths(self) -> list[float] | None:
+        plan = self.state.get("clips_plan")
+        if self.params.get("engine") != "clips" or not plan:
+            return None
+        return [max(4.5, s["duration"]) for s in plan["segments"]]
+
+    def _build_segments(self, ids: list[str], analyses: list[dict]) -> dict:
+        """Cut every clip into lyric-sized pieces inside the job folder (so the job survives deleting the upload)."""
+        segs = clips.plan_segments(ids)
+        by_id = {cid: a for cid, a in zip(ids, analyses)}
+        seg_dir = self.dir / "segments"
+        seg_dir.mkdir(exist_ok=True)
+        for i, s in enumerate(segs):
+            s["file"] = f"segments/seg_{i:02}.mp4"
+            s["describe"] = clips.describe_segment(s, by_id[s["clip"]])
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(len(segs), os.cpu_count() or 2))) as pool:
+            list(pool.map(lambda i: clips.cut_segment(segs[i]["clip"], segs[i]["start"], segs[i]["end"],
+                                                      self.dir / segs[i]["file"], config.VIDEO_W, config.VIDEO_H, config.FPS),
+                          range(len(segs))))
+        warnings, seen = [], set()
+        for cid, a in zip(ids, analyses):
+            if cid in seen:
+                continue
+            seen.add(cid)
+            name = clips.get(cid)["name"]
+            if a.get("kid_safe") is False:
+                warnings.append({"clip": name, "note": a.get("kid_safe_notes") or "may not be suitable for toddlers"})
+            if a.get("has_text_or_logo"):
+                warnings.append({"clip": name, "note": "contains text or a logo (another channel's brand?)"})
+        return {"segments": segs, "warnings": warnings}
+
+    def _run_clips(self) -> None:
+        p = self.params
+        langs = p.get("languages") or ["en", "hi"]
+        ids = p.get("clips") or []
+        if not ids and not self.state.get("clips_plan"):
+            raise RuntimeError("No clips were selected")
+        self.state["cast"] = []
+        if not self.state.get("clips_plan"):
+            analyses = []
+            for k, cid in enumerate(ids):
+                self.step(f"Gemini is watching clip {k + 1}/{len(ids)}", 0.03 + 0.12 * k / len(ids))
+                analyses.append(clips.analyze(cid, self.ledger))
+            self.step("Cutting your clips into pieces that fit the lyrics", 0.17)
+            self.state["clips_plan"] = self._build_segments(ids, analyses)
+            self.save()
+        plan = self.state["clips_plan"]
+        self.step("Writing lyrics that fit your footage", 0.25)
+        script = self.state.get("script") or script_gen.generate_clip_script(plan["segments"], p.get("topic"), p.get("poem"), self.ledger)
+        self.state["script"] = script
+        self.save()
+        for lang in langs:
+            self._ensure_lyrics(lang)
+        keyframes = []
+        for i, s in enumerate(plan["segments"]):   # a frame from each piece: thumbnails are made from these
+            dest = self.dir / f"keyframe_{i:02}.png"
+            if not dest.exists():
+                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{s['duration'] * 0.4:.2f}", "-i",
+                                str(self.dir / s["file"]), "-frames:v", "1", str(dest)], check=True)
+            keyframes.append(dest.name)
+        self.state["keyframes"] = keyframes
+        self.save()
+        for li, lang in enumerate(langs):
+            self._produce_language(lang, 0.35 + 0.6 * li / len(langs))
+
+    def _render_clips(self, lang: str, durations: list[float]) -> Path:
+        """Fit each piece of footage to the time its lyric line needs (speed up / slow down smoothly, never a freeze)."""
+        segs = self.state["clips_plan"]["segments"]
+        outs = [self.dir / f"clip_{lang}_{i:02}.mp4" for i in range(len(segs))]
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(len(segs), os.cpu_count() or 2))) as pool:
+            list(pool.map(lambda i: render.fit_clip(self.dir / segs[i]["file"], durations[i], outs[i]), range(len(segs))))
+        silent = self.dir / f"video_silent_{lang}.mp4"
+        render.crossfade_concat(outs, durations, self._xfade(), silent)
+        for c in outs:
+            c.unlink(missing_ok=True)
+        return silent
 
     def _build_cutout(self, chars: list[dict], mode: str) -> list[Path]:
         """Animated cut-outs engine: fetch / draw backgrounds, cut-out sprites and props (library-cached),
@@ -277,6 +361,8 @@ class Job:
         """Re-time the (already paid for) keyframes / Veo clips to this language's audio. ffmpeg only."""
         if self.params.get("engine") == "cutout":
             return self._render_cutout(lang, durations, song)
+        if self.params.get("engine") == "clips":
+            return self._render_clips(lang, durations)
         scenes = self.state["script"]["scenes"]
         clips = [self.dir / f"clip_{lang}_{i:02}.mp4" for i in range(len(scenes))]
 
@@ -301,11 +387,18 @@ class Job:
         name = languages.name(lang)
         scenes = self.state["script"]["scenes"]
         lead = self._voice_lead()
-        if self.params.get("vocals") == "sung":
+        vocal = self._vocal(lang)
+        previous = dict((self.state.get("outputs") or {}).get(lang) or {})
+        if vocal["mode"] == "sung":
             self.step(f"Composing the {name} song", progress)
-            per = max(MIN_SCENE_SEC, int(self.params.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
-            planned = render.snap_to_bars([per] * len(scenes), self._xfade(), toddler.MUSIC["bpm"])
-            song = elevenlabs.compose(scenes, planned, lang, self.params.get("mode", "2d"), self.ledger)
+            natural = self._natural_lengths()
+            if natural:   # footage keeps its own length; the song is composed to it
+                planned = [round(d * config.FPS) / config.FPS for d in natural]
+            else:
+                per = max(MIN_SCENE_SEC, int(self.params.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
+                planned = render.snap_to_bars([per] * len(scenes), self._xfade(), toddler.MUSIC["bpm"])
+            song = elevenlabs.compose(scenes, planned, lang, self.params.get("mode", "2d"), self.ledger,
+                                      voice=vocal["voice"], take=vocal["take"])
             self.step(f"Finding where each {name} line is sung", progress + 0.05)
             durations, starts, total, line_t, method = self._timeline_sung(lang, song, planned)
             voices = [{"path": None, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus")),
@@ -313,7 +406,7 @@ class Job:
                       for i, s in enumerate(scenes)]
         else:
             self.step(f"Recording {name} narration", progress)
-            voices = tts.synthesize_scenes(scenes, lang, self.ledger)
+            voices = tts.synthesize_scenes(scenes, lang, self.ledger, voice=vocal["voice"])
             durations, starts, total = self._timeline_spoken(voices)
             song, method = None, "exact"
         self.state.setdefault("timelines", {})[lang] = {
@@ -338,10 +431,18 @@ class Job:
         self.state["outputs"][lang] = {
             "video": final.name, "video_clean": final.name, "lyrics_on_screen": False,
             "captions": srt.name, "thumbnail": thumb.name,
-            "duration": round(total, 1), "language": name, "sync": method,
+            "duration": round(total, 1), "language": name, "sync": method, "vocals": vocal,
             **meta, "youtube": None,
         }
-        self.state["outputs"][lang]["lyrics_on_screen"] = bool(self.params.get("lyrics_on_screen", True))
+        for k in ("youtube", "published", "thumbnail_choice"):   # a new voice must not forget what was already published
+            if previous.get(k) is not None:
+                self.state["outputs"][lang][k] = previous[k]
+        if "lyrics_on_screen" in previous:
+            self.state["outputs"][lang]["lyrics_on_screen"] = previous["lyrics_on_screen"]
+        for k in ("title", "description", "tags", "hashtags", "title_en"):   # keep the text you may have edited/published
+            if previous.get(k):
+                self.state["outputs"][lang][k] = previous[k]
+        self.state["outputs"][lang].setdefault("lyrics_on_screen", bool(self.params.get("lyrics_on_screen", True)))
         self.step(f"Adding {name} lyrics & logo", progress + 0.28)
         self._rebuild_output(lang)
 
@@ -453,6 +554,8 @@ class Job:
             if len(found) < len(self.state["script"]["scenes"]):
                 raise RuntimeError("The pictures of this video are missing on the server; it has to be re-created.")
             self.state["keyframes"] = found
+        if self.params.get("engine") == "clips" and not self.state.get("clips_plan"):
+            raise RuntimeError("This video has no saved footage pieces; it has to be re-created.")
         if self.params.get("engine") == "cutout" and not self.state.get("cutout"):
             raise RuntimeError("This video has no saved animation data; it has to be re-created.")
         if self.params.get("engine") == "veo" and len(self.state.get("veo_clips") or []) < len(self.state["script"]["scenes"]):
@@ -464,6 +567,34 @@ class Job:
 
     def add_language(self, lang: str) -> None:
         self.run(lambda: self._add_language(lang))
+
+    def _vocal(self, lang: str) -> dict:
+        """How this language is voiced: spoken (Google) or sung (ElevenLabs), female/male voice, and a 'take'
+        number (a new take of a sung song is a fresh composition). Defaults to the video's own setting."""
+        v = (self.state.get("vocals") or {}).get(lang) or {}
+        return {"mode": v.get("mode") or self.params.get("vocals", "tts"), "voice": v.get("voice") or "female",
+                "take": int(v.get("take") or 0)}
+
+    def _change_vocals(self, lang: str, mode: str, voice: str, take: int) -> None:
+        if lang not in (self.state.get("outputs") or {}):
+            raise RuntimeError(f"There is no {lang} version of this video yet")
+        self.state.setdefault("vocals", {})[lang] = {"mode": mode, "voice": voice, "take": take}
+        self._add_language(lang)
+
+    def change_vocals(self, lang: str, mode: str, voice: str, take: int) -> None:
+        """Re-voice one language of a finished video. Pictures and lyrics are reused; if it fails the old
+        video stays as it was."""
+        old = dict((self.state.get("vocals") or {}).get(lang) or {})
+        def go():
+            try:
+                self._change_vocals(lang, mode, voice, take)
+            except BaseException:
+                if old:
+                    self.state["vocals"][lang] = old
+                else:
+                    self.state.get("vocals", {}).pop(lang, None)
+                raise
+        self.run(go)
 
 
 def delete_job(job_id: str) -> None:

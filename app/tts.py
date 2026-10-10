@@ -45,9 +45,10 @@ def _ssml(text: str, chorus: bool = False) -> str:
             f'{safe}</prosody></speak>')
 
 
-def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = False) -> Path:
-    voice = languages.tts_voice(lang)
-    key = hashlib.sha256(f"{lang}|{voice}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}".encode()).hexdigest()[:24]
+def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = False, gender: str = "female") -> Path:
+    male = gender == "male"
+    voice = None if male else languages.tts_voice(lang)
+    key = hashlib.sha256(f"{lang}|{voice}|{gender if male else ''}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}".encode()).hexdigest()[:24]
     out = config.CACHE_DIR / "tts" / f"{key}.wav"
     if out.exists():
         ledger.tts(f"{lang} line", len(text), cached=True)
@@ -102,11 +103,11 @@ def trimmed(path: Path) -> Path:
     return out
 
 
-def synthesize_scenes(scenes: list[dict], lang: str, ledger: CostLedger) -> list[dict]:
+def synthesize_scenes(scenes: list[dict], lang: str, ledger: CostLedger, voice: str = "female") -> list[dict]:
     """Return [{path, duration}] aligned with scenes."""
     key = f"line_{lang}"
     out = []
     for s in scenes:
-        p = trimmed(synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus"))))
+        p = trimmed(synthesize_line(s[key], lang, ledger, chorus=bool(s.get("is_chorus")), gender=voice))
         out.append({"path": str(p), "duration": media_duration(p), "text": s[key], "chorus": bool(s.get("is_chorus"))})
     return out

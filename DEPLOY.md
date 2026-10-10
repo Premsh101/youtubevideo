@@ -108,6 +108,10 @@ The page is one screen: left column = settings 1-2-3, right column = progress / 
     If a character's cut-out looks wrong (leftover background, missing parts) press 🔄 next to its small preview
     in the character library to draw it again (about ₹3).
   - `🎬 Veo video clips` (≈₹1,500): AI video, each scene one 8 s clip.
+- *Source `🎞 My own clips`*: upload your own short videos (≤120 s each, ≤600 s total, MP4/MOV/WebM/MKV/AVI, ≤300 MB).
+  Gemini watches each clip once (cached), writes rhyming lyrics per language that fit the footage (≈₹5 per video,
+  no image cost), and the footage is cut into ~7 s pieces and time-fitted to the song without freezing. Vertical/square
+  clips get a blurred backdrop; the clips' own sound is muted; kid-safety and on-screen-text warnings show on the result.
 - *Vocals*: `🗣 Spoken rhyme` (Google TTS, ≈₹3) or `🎤 Sung song` (ElevenLabs, ≈₹25 per language;
   greyed out until `ELEVENLABS_API_KEY` is set).
 - *Output videos*: tick any languages (English, हिंदी, Urdu, Tamil, German, French, Spanish…) — each

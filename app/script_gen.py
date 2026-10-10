@@ -60,6 +60,49 @@ Return JSON:
 }}"""
 
 
+def generate_clip_script(segments: list[dict], topic: str | None, user_poem: str | None, ledger: CostLedger) -> dict:
+    """Lyrics for footage that already exists: one rhyming line per segment, matching what that segment shows.
+    `segments` carry a "describe" text (from Gemini's watching of the clip). Same result shape as generate_script,
+    so the rest of the pipeline (rhyming per language, voice, thumbnails, publishing) is shared."""
+    n = len(segments)
+    board = "\n".join(f'{i + 1}. ({s["duration"]:.0f} s) {s["describe"]}' for i, s in enumerate(segments))
+    source = (f'Use THIS poem/rhyme written by the owner as the lyrics, matching its lines to the segments by meaning '
+              f'(keep its words; you may lightly smooth the rhythm):\n"""\n{user_poem}\n"""'
+              if user_poem else
+              f'Write ORIGINAL lyrics that describe what each segment shows{f", on the theme: {topic}" if topic else ""}.')
+    prompt = f"""CLIP SCRIPT. You write nursery rhymes for toddlers aged 1-3 for a bilingual (English + Hindi) YouTube channel.
+The pictures ALREADY EXIST: the video is composed of {n} segments, shown in this order. Write lyrics that FIT what each
+segment shows: exactly one lyric line per segment, sung while that segment is on screen, naming the visible things and
+actions in simple words.
+
+SEGMENTS:
+{board}
+
+{source}
+
+Rules: RHYMING COUPLETS (lines 1+2, 3+4, 5+6 ... must end with rhyming words), 4-9 very simple words per line, repetition,
+a short catchy HOOK line repeated as a chorus at least twice ("is_chorus": true, word for word identical each time) if
+there are 6 or more segments, a happy calm ending. Never describe anything that is not visible in the segment.
+No scary, sad or violent wording. Hindi: natural spoken Hindi in Devanagari, not a literal translation.
+
+Return JSON: {{"title_en": str, "title_hi": str, "description_en": str (2 sentences), "description_hi": str,
+"tags": [8 short tags, mixed EN/HI], "about": "one sentence: what the whole video shows",
+"scenes": [{{"index": 0, "line_en": str, "line_hi": str, "is_chorus": bool, "visual": "short description of the segment"}}]}}"""
+    data = generate_json(prompt, ledger, "lyrics for your clips")
+    scenes = data.get("scenes") or []
+    if len(scenes) != n:
+        raise RuntimeError(f"Gemini returned {len(scenes)} lines for {n} clip segments; press Resume to try again")
+    for i, s in enumerate(scenes):
+        s["index"] = i
+        s["is_chorus"] = bool(s.get("is_chorus"))
+        s.setdefault("visual", segments[i]["describe"][:120])
+        s.setdefault("camera", "slow zoom in")
+        s.setdefault("mood_colour", "sky blue")
+    data["scenes"] = scenes
+    data["mode"], data["engine"] = "2d", "clips"
+    return data
+
+
 def generate_script(topic: str | None, user_poem: str | None, characters: list[dict],
                     mode: str, engine: str, target_seconds: int, ledger: CostLedger) -> dict:
     n = scene_count(engine, target_seconds)

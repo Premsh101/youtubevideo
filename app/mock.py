@@ -34,6 +34,19 @@ _RHYME_HI = [
 
 
 def mock_json(prompt: str) -> dict:
+    if prompt.startswith("CLIP ANALYSIS."):   # Gemini watching a clip
+        dur = float(re.search(r"about (\d+) seconds", prompt).group(1))
+        unsafe = "scary" in (re.search(r'file name "([^"]*)"', prompt) or [None, ""])[1].lower()   # only the clip's own file name
+        return {"summary": "A friendly character hops across a sunny meadow and waves.", "subjects": ["a friendly character", "a meadow"],
+                "actions": ["hops", "waves"], "setting": "a sunny meadow", "mood": "playful", "colours": ["green", "yellow"],
+                "moments": [{"t": round(dur * f, 1), "what": w} for f, w in ((0.1, "the character appears"), (0.5, "the character hops"), (0.85, "the character waves"))],
+                "has_text_or_logo": False, "kid_safe": not unsafe, "kid_safe_notes": "dark, frightening mood" if unsafe else ""}
+    if prompt.startswith("CLIP SCRIPT."):   # lyrics for existing footage
+        n = int(re.search(r"composed of (\d+) segments", prompt).group(1))
+        return {"title_en": "Hop Hop Hooray", "title_hi": "उछल कूद", "description_en": "A happy hopping rhyme.", "description_hi": "एक मज़ेदार कविता।",
+                "tags": ["nursery rhyme", "kids", "hop", "बाल गीत"], "about": "A friendly character hops and waves in a sunny meadow.",
+                "scenes": [{"index": i, "line_en": _RHYME_EN[i % len(_RHYME_EN)], "line_hi": _RHYME_HI[i % len(_RHYME_HI)],
+                            "is_chorus": i in (0, n - 1) and n >= 6, "visual": f"segment {i + 1}"} for i in range(n)]}
     if prompt.startswith("JUDGE."):   # independent rhyme judge: agrees with everything unless told otherwise
         n = len(re.findall(r"^Couplet \d+:", prompt, flags=re.M))
         return {"couplets": [{"n": k + 1, "end_a": "x", "end_b": "x", "rhymes": True} for k in range(n)]}

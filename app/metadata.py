@@ -42,7 +42,7 @@ def viral_metadata(script: dict, lang: str, cast: list[dict], ledger: CostLedger
     key = f"line_{lang}"
     lyrics = "\n".join(s.get(key, "") for s in script["scenes"])
     base_title = (script.get("titles") or {}).get(lang) or script.get(f"title_{lang}") or script.get("title_en")
-    chars = ", ".join(f"{c['name']} the {c['species']}" for c in cast) or "cute animal friends"
+    chars = ", ".join(f"{c['name']} the {c['species']}" for c in cast) or script.get("about") or "cute animal friends"
     prompt = f"""You are a YouTube growth strategist for "{config.CHANNEL_NAME}", a toddler (age 1-3) nursery-rhyme channel.
 Write the metadata for this video in {languages.name(lang)} (native script; add common English/romanised
 search terms too where parents search that way, e.g. Hindi parents also type "hindi rhymes", "balgeet").

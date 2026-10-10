@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import tts
-from . import (branding, characters, cutout, config, costs, elevenlabs, languages, pipeline, presets, public_urls, publish,
+from . import (branding, characters, clips, cutout, config, costs, elevenlabs, languages, pipeline, presets, public_urls, publish,
                script_gen, social, youtube)
 from .costs import CostLedger
 
@@ -177,6 +177,31 @@ def api_add_language(job_id: str, lang: str) -> dict:
     return {"ok": True, "job": job_id, "language": lang}
 
 
+class VocalsIn(BaseModel):
+    mode: Literal["tts", "sung"]
+    voice: Literal["female", "male"] = "female"
+    new_take: bool = False       # sung only: compose a different song even if nothing else changed
+
+
+@app.post("/api/jobs/{job_id}/vocals/{lang}")
+def api_change_vocals(job_id: str, lang: str, body: VocalsIn) -> dict:
+    """Re-voice one language of a finished video (spoken <-> sung, female/male, new take). Pictures and
+    lyrics are reused; only the new voice/song is paid for."""
+    if body.mode == "sung" and not elevenlabs.is_configured():
+        raise HTTPException(400, "Sung vocals need ELEVENLABS_API_KEY on the server")
+    job = _load_idle_job(job_id)
+    if lang not in (job.state.get("outputs") or {}):
+        raise HTTPException(404, f"no {lang} version of this video")
+    cur = job._vocal(lang)
+    take = cur["take"] + 1 if body.new_take else (cur["take"] if body.mode == cur["mode"] else 0)
+    if (body.mode, body.voice, take) == (cur["mode"], cur["voice"], cur["take"]):
+        raise HTTPException(409, "that is already how this language is voiced; pick a different voice or tick 'new take'")
+    _jobs[job_id] = job
+    threading.Thread(target=job.change_vocals, args=(lang, body.mode, body.voice, take), daemon=True,
+                     name=f"vocals-{job_id}-{lang}").start()
+    return {"ok": True, "job": job_id, "language": lang}
+
+
 def _load_idle_job(job_id: str) -> pipeline.Job:
     live = _jobs.get(job_id)
     if live and live.state["status"] in ("running", "waiting", "queued"):
@@ -223,7 +248,8 @@ def api_presets() -> list[dict]:
 # ----------------------------------------------------------------------- jobs
 class JobIn(BaseModel):
     mode: Literal["2d", "3d"]
-    engine: Literal["images", "veo", "cutout"] = "images"
+    engine: Literal["images", "veo", "cutout", "clips"] = "images"
+    clips: list[str] = Field([], description="engine=clips: ids of uploaded clips, in the order they play")
     vocals: Literal["tts", "sung"] = "tts"
     languages: list[str] = ["en", "hi"]
     character_mode: Literal["auto", "library", "describe"] = "auto"
@@ -237,10 +263,68 @@ class JobIn(BaseModel):
     bookends: bool = True
 
 
+def _clip_stats(ids: list[str]) -> tuple[int, float]:
+    """(number of lyric lines, seconds of footage) for the chosen clips."""
+    try:
+        total = sum(clips.get(c)["duration"] for c in ids)
+        return len(clips.plan_segments(ids)), total
+    except KeyError:
+        raise HTTPException(404, "one of the selected clips no longer exists")
+
+
 @app.post("/api/estimate")
 def api_estimate(body: JobIn) -> dict:
+    if body.engine == "clips":
+        if not body.clips:
+            return {"scenes": 0, **costs.estimate(0, "clips", body.languages, vocals=body.vocals, seconds=0, clip_seconds=0)}
+        n, total = _clip_stats(body.clips)
+        return {"scenes": n, **costs.estimate(n, "clips", body.languages, vocals=body.vocals, seconds=int(total), clip_seconds=total)}
     n = script_gen.scene_count(body.engine, body.target_seconds)
     return {"scenes": n, **costs.estimate(n, body.engine, body.languages, vocals=body.vocals, seconds=body.target_seconds)}
+
+
+# ------------------------------------------------------------------ your own clips (library)
+@app.get("/api/clips")
+def api_clips() -> list[dict]:
+    return [{**m, "thumb_url": f"/api/clips/{m['id']}/thumb.jpg",
+             "analyzed": (clips.DIR / m["id"] / "analysis.json").exists()} for m in clips.list_clips()]
+
+
+@app.post("/api/clips")
+async def api_upload_clip(file: UploadFile = File(...)) -> dict:
+    """Upload one video into the clip library (the page sends several files one after another)."""
+    import tempfile
+    tmp = Path(tempfile.mkstemp(suffix=Path(file.filename or "x.mp4").suffix, dir=clips.DIR)[1])
+    size = 0
+    try:
+        with open(tmp, "wb") as fh:
+            while chunk := await file.read(1 << 20):
+                size += len(chunk)
+                if size > clips.MAX_BYTES:
+                    raise HTTPException(413, f"That file is larger than {clips.MAX_BYTES // (1024 * 1024)} MB")
+                fh.write(chunk)
+        try:
+            meta = clips.add(tmp, file.filename or "clip.mp4")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    finally:
+        tmp.unlink(missing_ok=True)
+    return {**meta, "thumb_url": f"/api/clips/{meta['id']}/thumb.jpg", "analyzed": False}
+
+
+@app.get("/api/clips/{cid}/thumb.jpg")
+def api_clip_thumb(cid: str) -> FileResponse:
+    try:
+        clips.get(cid)
+    except KeyError:
+        raise HTTPException(404)
+    return FileResponse(clips.thumb_path(cid))
+
+
+@app.delete("/api/clips/{cid}")
+def api_delete_clip(cid: str) -> dict:
+    clips.delete(cid)   # videos already made keep their own copies of the footage
+    return {"ok": True}
 
 
 @app.post("/api/jobs")
@@ -258,6 +342,14 @@ def api_create_job(body: JobIn) -> dict:
         body.characters = []
     if body.vocals == "sung" and not elevenlabs.is_configured():
         raise HTTPException(400, "Sung vocals need ELEVENLABS_API_KEY on the server")
+    if body.engine == "clips":
+        if not body.clips:
+            raise HTTPException(400, "Select at least one clip")
+        n, total = _clip_stats(body.clips)
+        if total > 600:
+            raise HTTPException(400, f"{total:.0f} s of footage is too much for one video (max 10 minutes)")
+    else:
+        body.clips = []
     job = pipeline.Job(body.model_dump())
     _jobs[job.id] = job
     threading.Thread(target=job.run, daemon=True, name=f"job-{job.id}").start()

@@ -26,18 +26,18 @@ def is_configured() -> bool:
     return bool(os.getenv("ELEVENLABS_API_KEY")) or config.MOCK_AI
 
 
-def _styles(lang: str, mode: str) -> tuple[list[str], list[str]]:
+def _styles(lang: str, mode: str, voice: str = "female") -> tuple[list[str], list[str]]:
     lang_name = languages.name(lang)
-    pos = [f"children's nursery rhyme sung in {lang_name}", "cheerful female lead vocal", "kids chorus sing-along",
+    pos = [f"children's nursery rhyme sung in {lang_name}", ("friendly male lead vocal" if voice == "male" else "cheerful female lead vocal"), "kids chorus sing-along",
            "clear pronunciation", f"{toddler.MUSIC['bpm']} bpm", "major key", "glockenspiel, ukulele, soft claps",
            "simple catchy melody", "preschool TV theme", "warm and gentle"]
     neg = ["distorted", "aggressive", "scary", "fast rap", "heavy drums", "dissonant", "adult themes", "silence"]
     return pos, neg
 
 
-def build_plan(scenes: list[dict], durations: list[float], lang: str, mode: str) -> dict:
+def build_plan(scenes: list[dict], durations: list[float], lang: str, mode: str, voice: str = "female") -> dict:
     key = f"line_{lang}"
-    pos, neg = _styles(lang, mode)
+    pos, neg = _styles(lang, mode, voice)
     chunks = []
     for s, d in zip(scenes, durations):
         label = "Chorus" if s.get("is_chorus") else "Verse"
@@ -51,10 +51,11 @@ def build_plan(scenes: list[dict], durations: list[float], lang: str, mode: str)
     return {"chunks": chunks}
 
 
-def compose(scenes: list[dict], durations: list[float], lang: str, mode: str, ledger: CostLedger) -> Path:
-    plan = build_plan(scenes, durations, lang, mode)
+def compose(scenes: list[dict], durations: list[float], lang: str, mode: str, ledger: CostLedger,
+            voice: str = "female", take: int = 0) -> Path:
+    plan = build_plan(scenes, durations, lang, mode, voice)
     minutes = sum(c["duration_ms"] for c in plan["chunks"]) / 60000
-    key = hashlib.sha256(json.dumps([MODEL, plan], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
+    key = hashlib.sha256(json.dumps([MODEL, plan] + ([take] if take else []), sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
     out = config.CACHE_DIR / "songs" / f"{key}.mp3"
     if out.exists():
         ledger.sung(f"{lang} song", minutes, cached=True)

@@ -84,6 +84,7 @@ PRICES = {
     # per 1M characters
     "tts_per_1m_chars": 16.0,
     # per minute of sung song (ElevenLabs Music API; check your plan, varies)
+    "stt_per_minute": 0.0067,  # ElevenLabs Scribe speech-to-text (~$0.40/h): checks the sung words against the lyrics
     "sung_per_minute": 0.21,  # ≈ ₹17.6/min: ElevenLabs Starter ₹528 / 30k credits at ~1,000 credits per song-minute
 }
 for _k in list(PRICES):

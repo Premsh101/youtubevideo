@@ -218,12 +218,19 @@ class Job:
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1]
 
-    def _timeline_sung(self, lang: str, song: Path, planned_durations: list[float]) -> tuple[list[float], list[float], float, list[float], str]:
+    def _planned_line_starts(self, planned_durations: list[float]) -> list[float]:
+        return [t + 0.4 for t in render.scene_starts(planned_durations, self._xfade())]
+
+    def _timeline_sung(self, lang: str, song: Path, planned_durations: list[float],
+                       measured: list[float] | None = None) -> tuple[list[float], list[float], float, list[float], str]:
         xf, lead = self._xfade(), self._voice_lead()
         total = tts.media_duration(song)
-        planned_starts = [t + 0.4 for t in render.scene_starts(planned_durations, xf)]
+        planned_starts = self._planned_line_starts(planned_durations)
         lines = [s[f"line_{lang}"] for s in self.state["script"]["scenes"]]
-        line_t, method = align.line_starts(song, lines, total, planned_starts, self.ledger)
+        if measured and align._valid(measured, total, len(lines)):   # word times from listening back to the song
+            line_t, method = list(measured), "stt"
+        else:
+            line_t, method = align.line_starts(song, lines, total, planned_starts, self.ledger)
         # scene i begins `lead` before its line is sung; scene 0 always starts at 0
         bounds = [0.0] + [max(0.0, t - lead) for t in line_t[1:]]
         durations = [b2 - b1 + xf for b1, b2 in zip(bounds, bounds[1:])] + [total - bounds[-1]]
@@ -402,18 +409,19 @@ class Job:
             else:
                 per = max(MIN_SCENE_SEC, int(self.params.get("target_seconds") or config.TARGET_SECONDS) / len(scenes))
                 planned = render.snap_to_bars([per] * len(scenes), self._xfade(), md["bpm"])
-            song = elevenlabs.compose(scenes, planned, lang, self.params.get("mode", "2d"), self.ledger,
-                                      voice=vocal["voice"], take=vocal["take"], mood=vocal["mood"])
+            song, check = self._compose_checked(scenes, planned, lang, vocal, name, progress)
             self.step(f"Finding where each {name} line is sung", progress + 0.05)
-            durations, starts, total, line_t, method = self._timeline_sung(lang, song, planned)
+            durations, starts, total, line_t, method = self._timeline_sung(
+                lang, song, planned, check["starts"] if check.get("available") and all(check["heard"]) else None)
             voices = [{"path": None, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus")),
                        "duration": max(0.8, (line_t[i + 1] if i + 1 < len(line_t) else total) - line_t[i] - 0.3)}
                       for i, s in enumerate(scenes)]
+            lyrics_match = self._apply_lyric_check(check, voices)
         else:
             self.step(f"Recording {name} narration", progress)
             voices = tts.synthesize_scenes(scenes, lang, self.ledger, voice=vocal["voice"], mood=vocal["mood"])
             durations, starts, total = self._timeline_spoken(voices, lang)
-            song, method = None, "exact"
+            song, method, lyrics_match = None, "exact", {"ok": True, "checked": False}
         self.state.setdefault("timelines", {})[lang] = {
             "durations": durations, "starts": starts, "total": total, "xfade": self._xfade(),
             "voice_lead": lead, "sync": method,
@@ -439,6 +447,7 @@ class Job:
             "captions": srt.name, "thumbnail": thumb.name,
             "duration": round(total, 1), "language": name, "sync": method, "vocals": vocal,
             "mood_check": self._mood_check(song if song is not None else music, vocal["mood"]),
+            "lyrics_match": lyrics_match,
             **meta, "youtube": None,
         }
         for k in ("youtube", "published", "thumbnail_choice"):   # a new voice must not forget what was already published
@@ -580,6 +589,36 @@ class Job:
         v = (self.state.get("vocals") or {}).get(lang) or {}
         return {"mode": v.get("mode") or self.params.get("vocals", "tts"), "voice": v.get("voice") or "female",
                 "take": int(v.get("take") or 0), "mood": v.get("mood") or self._video_mood()}
+
+    def _compose_checked(self, scenes: list[dict], planned: list[float], lang: str, vocal: dict, name: str,
+                         progress: float) -> tuple[Path, dict]:
+        """Compose the song, listen back, and re-record once if the singer changed too many words."""
+        mode = self.params.get("mode", "2d")
+        song = elevenlabs.compose(scenes, planned, lang, mode, self.ledger, voice=vocal["voice"], take=vocal["take"], mood=vocal["mood"])
+        self.step(f"Listening back: did the singer sing the {name} words?", progress + 0.03)
+        check = elevenlabs.verify(song, scenes, lang, self._planned_line_starts(planned), self.ledger)
+        if check.get("available") and check["match"] < elevenlabs.MATCH_OK:
+            self.step(f"The singer changed too many {name} words ({int(check['match'] * 100)}% kept); recording another take", progress + 0.04)
+            song2 = elevenlabs.compose(scenes, planned, lang, mode, self.ledger, voice=vocal["voice"], take=vocal["take"],
+                                       mood=vocal["mood"], attempt=1)
+            check2 = elevenlabs.verify(song2, scenes, lang, self._planned_line_starts(planned), self.ledger)
+            if check2.get("available") and check2["match"] > check["match"]:
+                song, check = song2, check2
+            check["retried"] = True
+        return song, check
+
+    @staticmethod
+    def _apply_lyric_check(check: dict, voices: list[dict]) -> dict:
+        """Report for the UI; when the song still differs from the lyrics, the screen shows what is actually sung."""
+        if not check.get("available"):
+            return {"ok": None, "checked": False, "note": check.get("reason", "")}
+        ok = check["match"] >= elevenlabs.MATCH_OK
+        if not ok:
+            for i, v in enumerate(voices):
+                if check["sung"][i]:
+                    v["text"] = check["sung"][i]
+        return {"ok": ok, "checked": True, "match": check["match"], "per_line": check["per_line"], "sung": check["sung"],
+                "screen": "lyrics" if ok else "song", "retried": bool(check.get("retried"))}
 
     def _video_mood(self) -> str:
         """The mood of the whole video: your choice, else Gemini's pick from the topic. Old videos get a guess

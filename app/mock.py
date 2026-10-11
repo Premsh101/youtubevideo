@@ -72,8 +72,9 @@ def mock_json(prompt: str) -> dict:
         return {"couplets": [{"n": k + 1, "end_a": "x", "end_b": "x", "rhymes": True} for k in range(n)]}
     if prompt.startswith("REPAIR."):   # rhyme repair: partner's sound is given in the prompt
         idx = [int(x) for x in re.findall(r"line (\d+) REWRITE", prompt)]
-        snd = re.findall(r'sound "-([a-z]+)"', prompt)
-        return {"lines": [{"index": i, "text": f"repaired line {i}", "end_word": "w", "end_sound": sn} for i, sn in zip(idx, snd)]}
+        pairs = re.findall(r'sound "-([a-z]*)" \(word: ([^)]*)\)', prompt)
+        return {"lines": [{"index": i, "text": f"repaired line {i} {word.strip()}".strip(), "end_word": word.strip(), "end_sound": sn}
+                          for i, (sn, word) in zip(idx, pairs)]}
     if "children's songwriter" in prompt and '"end_sound"' in prompt:   # native rhyming lyrics
         n = int(re.search(r"Write exactly (\d+) lines", prompt).group(1))
         lang = re.search(r"writing in ([A-Za-z]+)", prompt).group(1)
@@ -226,6 +227,7 @@ def mock_song(scenes, durations, lang, out: Path) -> None:
     for f in out.parent.glob(out.stem + ".*.wav"):
         f.unlink()
     out.with_suffix(".truth.json").write_text(__import__("json").dumps(truth))
+    out.with_suffix(".lines.json").write_text(__import__("json").dumps([s[key] for s in scenes], ensure_ascii=False))
 
 
 def mock_clip(first: Path, last: Path | None, out: Path) -> None:
@@ -244,3 +246,23 @@ def mock_clip(first: Path, last: Path | None, out: Path) -> None:
         f"[am][b]blend=all_expr='A*(1-T/{dur})+B*(T/{dur})',format=yuv420p",
         "-r", str(config.FPS), "-t", str(dur), "-c:v", "libx264", "-preset", "veryfast", str(out),
     ], check=True)
+
+
+def mock_transcribe(song: Path) -> dict:
+    """Pretend speech-to-text: the words of each line at the true time it was hummed. With MOCK_SUNG_WRONG=1 the
+    'singer' replaces every second line with other words, so the lyric check must catch it."""
+    import json as _json
+    import os as _os
+    truth_f, lines_f = song.with_suffix(".truth.json"), song.with_suffix(".lines.json")
+    if not truth_f.exists() or not lines_f.exists():
+        return {"unavailable": "mock: no truth file"}
+    truth, lines = _json.loads(truth_f.read_text()), _json.loads(lines_f.read_text())
+    wrong = _os.getenv("MOCK_SUNG_WRONG") == "1"
+    words = []
+    for i, (t, line) in enumerate(zip(truth, lines)):
+        toks = line.split()
+        if wrong and i % 2 == 1:
+            toks = ["la", "la", "something", "else", "entirely"]
+        for k, w in enumerate(toks):
+            words.append({"text": w, "start": round(t + 0.42 * k, 3), "end": round(t + 0.42 * k + 0.3, 3)})
+    return {"words": words, "model": "mock"}

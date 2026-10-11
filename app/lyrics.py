@@ -215,6 +215,77 @@ def rhymes_devanagari(a: str, b: str) -> bool | None:
     return bool(ea and eb) and _match(ea, eb)
 
 
+# ---- English: spelling -> rough sound of the word's ending, for the simple words toddler rhymes use
+_EN_TAIL = [("eigh", "A"), ("igh", "I"), ("ough", "O"), ("augh", "O"), ("tion", "shun"), ("ee", "E"), ("ea", "E"),
+            ("ie", "E"), ("ey", "A"), ("ay", "A"), ("ai", "A"), ("oo", "U"), ("ue", "U"), ("ew", "U"), ("oa", "O"),
+            ("oe", "O"), ("ck", "k"), ("ph", "f"), ("ll", "l"), ("ss", "s"), ("tt", "t"), ("nn", "n"), ("pp", "p")]
+_VOW = set("aeiouAEIOU")
+# very common words whose spelling misleads the rules above (sound of the ending, in the same notation)
+_EN_WORDS = {"done": "un", "one": "un", "none": "un", "gone": "on", "come": "um", "some": "um", "love": "uv", "dove": "uv",
+             "above": "uv", "give": "iv", "live": "iv", "have": "av", "move": "Uv", "lose": "Uz", "whose": "Uz", "two": "U",
+             "to": "U", "do": "U", "who": "U", "you": "U", "shoe": "U", "through": "U", "were": "er", "there": "Er",
+             "where": "Er", "their": "Er", "bear": "Er", "hair": "Er", "chair": "Er", "wear": "Er", "said": "ed",
+             "again": "en", "friend": "end", "great": "At", "eye": "I", "bye": "I", "buy": "I", "my": "I", "by": "I",
+             "why": "I", "hi": "I", "go": "O", "so": "O", "no": "O", "toe": "O", "know": "O", "snow": "O", "grow": "O",
+             "show": "O", "blow": "O", "slow": "O", "low": "O", "now": "ow", "cow": "ow", "how": "ow", "wow": "ow",
+             "me": "E", "be": "E", "we": "E", "he": "E", "she": "E", "the": "E", "sea": "E", "tea": "E", "bee": "E",
+             "says": "ez", "eyes": "Iz", "shoes": "Uz", "head": "ed", "bread": "ed", "read": "Ed", "laugh": "af",
+             "water": "er", "mother": "er", "father": "er", "brother": "er", "sister": "er", "car": "ar", "star": "ar",
+             "are": "ar", "far": "ar", "warm": "orm", "want": "ont", "what": "ot", "put": "Ut", "foot": "Ut", "good": "Ud",
+             "could": "Ud", "would": "Ud", "should": "Ud", "book": "Uk", "look": "Uk", "took": "Uk", "cook": "Uk"}
+
+
+def english_key(word: str) -> str:
+    """Rhyming part of an English word by spelling: star/are -> ar, light/night -> It, sky/high -> I, see/tree -> E."""
+    w = re.sub(r"[^a-z]", "", (word or "").lower().replace("'", ""))
+    if w in _EN_WORDS:
+        return _EN_WORDS[w]
+    if len(w) < 2:
+        return ""
+    if w[-1] in "aeiou" and sum(c in "aeiou" for c in w) == 1:  # go, so, hi, flu: a lone final vowel is long
+        return w[-1].upper()
+    if w.endswith("ie") and len(w) <= 3:                           # pie, tie
+        w = w[:-2] + "I"
+    elif w.endswith("e") and len(w) >= 3 and w[-2] not in _VOW and w[-2] != "r" and w[-3] in "aeiou":
+        w = w[:-3] + w[-3].upper() + w[-2]                         # silent e lengthens the vowel: make -> mAk
+    elif w.endswith("e") and len(w) >= 3 and w[-2] == "r" and w[-3] in "aeiou":
+        w = w[:-1]                                                 # are -> ar, here -> her
+    elif w.endswith("y") and len(w) >= 2 and w[-2] not in _VOW:
+        w = w[:-1] + ("I" if not any(c in "aeiou" for c in w[:-1]) else "E")   # sky -> I, happy -> E
+    elif w.endswith("ou"):
+        w = w[:-2] + "U"                                           # you
+    for a, b in _EN_TAIL:
+        if a in w[-5:]:
+            w = w[: -5] + w[-5:].replace(a, b)
+    # from the last vowel group to the end
+    i = len(w)
+    while i > 0 and w[i - 1] not in _VOW:
+        i -= 1
+    j = i
+    while j > 0 and w[j - 1] in _VOW:
+        j -= 1
+    key = w[j:]
+    return key if len(key) >= 1 and (len(key) >= 2 or key[0].isupper()) else ""
+
+
+def rhymes_english(a: str, b: str) -> bool | None:
+    wa = re.findall(r"[A-Za-z']+", a or "")
+    wb = re.findall(r"[A-Za-z']+", b or "")
+    if not wa or not wb:
+        return None
+    if wa[-1].lower() == wb[-1].lower():
+        return True
+    ka, kb = english_key(wa[-1]), english_key(wb[-1])
+    if not ka or not kb:
+        return None
+    return ka == kb
+
+
+ENGLISH_RULES = """English rules: PERFECT rhymes only - the ending sounds from the last vowel must be identical (star / are,
+light / night, sky / high, play / day, moon / soon). Not slant rhymes (home / alone, love / move), not the same word
+twice (except a repeated chorus). Choose the two end words first, then write the lines towards them."""
+
+
 HINDI_RULES = """Hindi rules (हिंदी बाल-गीत): write the way Hindi children's rhymes are REALLY sung, not translated: short lines
 of 12-16 मात्राएँ with a bouncing beat, everyday words a 2-year-old hears at home (मम्मी, पापा, गाय, चिड़िया, रोटी, पानी,
 गोल, छोटा, प्यारा), repetition and sounds (छम छम, टप टप, म्याऊँ, भौं भौं). तुकबंदी: the LAST WORD of both lines of a
@@ -227,7 +298,7 @@ Models to imitate (traditional): "मछली जल की रानी है
 
 
 def language_rules(lang: str) -> str:
-    return HINDI_RULES if lang == "hi" else ""
+    return HINDI_RULES if lang == "hi" else ENGLISH_RULES if lang == "en" else ""
 
 
 # ------------------------------------------------------------------------------------ prompts
@@ -376,18 +447,18 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
         """Couplets whose endings don't match by the writer's own sounds OR that a fresh judge says don't rhyme.
         For Devanagari the strict check by code decides on its own (the model's Latin "sounds" are unreliable)."""
         bad = set(failing(sounds))
-        judged = _judge(texts, lang, ledger)
-        if judged:
-            bad |= set(judged)
+        judged = set(_judge(texts, lang, ledger) or [])
         for a, b in couplets(n):
             strict = rhymes_devanagari(texts[a], texts[b])
-            if strict is True:
-                bad.discard((a, b))
-                if not rhymes(sounds[a], sounds[b]):      # the model's Latin spelling was off: keep the report consistent
+            if strict is None and lang == "en":
+                strict = rhymes_english(texts[a], texts[b])
+            if strict is True and (a, b) not in judged:
+                bad.discard((a, b))                      # the writer's Latin "sound" was off, the words do rhyme
+                if not rhymes(sounds[a], sounds[b]):
                     sounds[b] = sounds[a]
             elif strict is False:
-                bad.add((a, b))
-        return sorted(bad)
+                bad.add((a, b))                          # a "no" from the code or from the judge always stands
+        return sorted(bad | judged)
 
     bad = bad_couplets()
     best = (len(bad), list(texts), list(sounds))

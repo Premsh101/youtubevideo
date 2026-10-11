@@ -42,6 +42,10 @@ class CostLedger:
         usd = 0.0 if cached else minutes * config.PRICES["sung_per_minute"]
         self.items.append(LineItem("sung", detail, minutes, usd, cached))
 
+    def stt(self, detail: str, minutes: float, cached: bool = False) -> None:
+        usd = 0.0 if cached else minutes * config.PRICES["stt_per_minute"]
+        self.items.append(LineItem("stt", detail, minutes, usd, cached))
+
     @property
     def total_usd(self) -> float:
         return sum(i.usd for i in self.items)

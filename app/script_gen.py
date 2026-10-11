@@ -45,6 +45,7 @@ Toddler rules (this is what the most-watched channels do): very simple words, LO
 a short catchy HOOK line that repeats as a chorus at least 3 times across the video, and a happy
 calm ending. Mark chorus lines with "is_chorus": true (hook must be word-for-word identical each time). Hindi must be natural spoken Hindi in Devanagari (not a literal translation);
 both versions must match the same scene meaning. No scary, sad or violent content.
+{lyrics.ENGLISH_RULES}
 {lyrics.HINDI_RULES}
 
 Produce exactly {n_scenes} scenes. Each scene = one lyric line (EN + HI) + one picture.

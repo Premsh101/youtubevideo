@@ -117,6 +117,11 @@ The page is one screen: left column = settings 1-2-3, right column = progress / 
   the Google voice speed/pitch, the synthesised background music, the lyric style and the picture colours. The
   finished audio is measured (musical hits per second) and a too-busy lullaby is flagged with a one-click new take.
   Drop your own tracks in `data/music/` with the mood in the file name (`sleepy_musicbox.mp3`) to have them picked.
+- *Sung words check*: after each ElevenLabs song the app transcribes it (Scribe speech-to-text, `stt` cost line,
+  ≈₹0.6/song; the key needs Speech to Text access) and compares with the lyrics. Below 80 % match it records one
+  more take; if still off, the on-screen lyrics follow what is actually sung and the result shows
+  `⚠ singer changed words`. Word times from the transcript also give the picture sync (`stt`).
+- *English rhymes* are checked by code too (spelling → sound of the ending), like Hindi.
 - *Hindi*: a topic typed in Hindi/Hinglish makes Hindi the original song (English follows). Hindi couplets are
   checked by code on their Devanagari endings and repaired; a named traditional rhyme is used as is, a copyrighted
   film song is not copied (a new rhyme on the theme is written and the result card says so).

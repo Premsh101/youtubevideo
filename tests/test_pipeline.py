@@ -145,7 +145,8 @@ def test_sung_vocals_job():
     # exactly `voice_lead` seconds before its line is sung, measured, not planned.
     tl = j["timelines"]["hi"]
     truth = [float(x) for x in __import__("json").loads(next((config.CACHE_DIR / "songs").glob("*.truth.json")).read_text())]
-    assert tl["sync"] == "mock-measured"
+    assert tl["sync"] in ("stt", "mock-measured")
+    assert j["outputs"]["hi"]["lyrics_match"]["ok"] is True and j["outputs"]["hi"]["lyrics_match"]["match"] == 1.0
     for i in range(1, len(truth)):
         assert abs((truth[i] - tl["starts"][i]) - tl["voice_lead"]) < 1 / 24 + 1e-6, (i, truth[i], tl["starts"][i])  # within one frame
     assert truth[-1] - truth[-2] > 0  # drift really happened vs. the plan
@@ -561,11 +562,12 @@ def test_independent_rhyme_judge_overrides_the_writers_own_claims(monkeypatch):
 
     script, rep = run(strict)
     assert rep["ok"] and rep["tries"] == 1 and calls["n"] == 2          # judged, repaired, judged again
-    assert script["scenes"][1]["line_en"] == "repaired line 2"          # the second line of the flagged couplet changed
-    assert script["scenes"][3]["line_en"] == "repaired line 4"          # and the couplet the sound-check caught
+    assert script["scenes"][1]["line_en"].startswith("repaired line 2")   # the second line of the flagged couplet changed
+    assert script["scenes"][3]["line_en"] == "Like a diamond in the sky"   # the writer's wrong Latin "sound" for high/sky
+    #                                                                       is overruled by the code check: no rewrite
 
-    script, rep = run(lambda texts, lang, ledger: None)                 # judge unavailable: writer's own check decides
-    assert rep["ok"] and rep["tries"] == 1
+    script, rep = run(lambda texts, lang, ledger: None)                 # judge unavailable: the code check decides
+    assert rep["ok"] and rep["tries"] == 0                              # (high/sky do rhyme: nothing to repair)
 
 
 # ------------------------------------------------------------------ your own clips
@@ -781,3 +783,46 @@ def test_hindi_rhymes_are_checked_by_code_and_hindi_themes_lead():
     assert s["rhyme"]["hi"]["ok"] and s["rhyme"]["en"]["ok"]
     for a, b in lyrics.couplets(len(s["scenes"])):   # (a mock-repaired line is Latin text -> "not applicable")
         assert lyrics.rhymes_devanagari(s["scenes"][a]["line_hi"], s["scenes"][b]["line_hi"]) is not False
+
+
+def test_sung_words_are_checked_and_screen_follows_the_song(monkeypatch):
+    from app import elevenlabs
+    # unit: a paraphrased line is noticed, the others matched; the cue is an inline direction, not a lyric
+    lines = ["twinkle twinkle little star", "how I wonder what you are", "up above the world so high"]
+    words = []
+    t = 0.0
+    for i, line in enumerate(lines):
+        for w in (line.split() if i != 1 else ["something", "very", "different", "here"]):
+            words.append({"text": w, "start": t, "end": t + 0.3}); t += 0.4
+        t += 1.0
+    r = elevenlabs.match_lyrics(words, lines, [0.0, 3.0, 6.0], 12.0)
+    assert r["per_line"][0] == 1.0 and r["per_line"][1] == 0.0 and r["per_line"][2] == 1.0 and 0.6 < r["match"] < 0.7
+    assert r["sung"][1] == "something very different here" and r["heard"] == [True, False, True]
+    plan = elevenlabs.build_plan([{"line_en": "Sleep now", "is_chorus": False}], [8.0], "en", "2d", "female", "sleepy")
+    assert plan["chunks"][0]["text"].startswith("[Lullaby] {") and plan["chunks"][0]["text"].endswith("}\nSleep now")
+    # end to end: the mock singer changes every second line -> re-recorded once, still wrong -> screen follows the song
+    monkeypatch.setenv("MOCK_SUNG_WRONG", "1")
+    body = {"mode": "2d", "engine": "images", "languages": ["en"], "vocals": "sung", "preset": "twinkle", "target_seconds": 45}
+    j = _wait(client.post("/api/jobs", json=body).json()["id"])
+    assert j["status"] == "done", j.get("error")
+    m = j["outputs"]["en"]["lyrics_match"]
+    assert m["checked"] and m["ok"] is False and m["retried"] and m["screen"] == "song"
+    srt = (config.OUTPUT_DIR / j["id"] / j["outputs"]["en"]["captions"]).read_text()
+    assert "la la something else entirely" in srt                     # what is sung is what is on screen
+    assert "stt" in j["cost"]["by_kind"]
+
+
+def test_english_rhymes_are_checked_by_code_too():
+    from app import lyrics
+    good = [("twinkle little star", "what you are"), ("little light", "all the night"), ("so high", "in the sky"),
+            ("come and play", "a sunny day"), ("the sun", "lots of fun"), ("look and see", "a tall tree"),
+            ("the big moon", "very soon"), ("go to sleep", "the water is deep"), ("sit down", "in the town"),
+            ("my red car", "where you are"), ("the sky is blue", "I love you"), ("let us go", "the wind will blow")]
+    bad = [("the star", "the moon"), ("little light", "a sunny day"), ("my home", "all alone"), ("the cat", "the dog"),
+           ("I love", "we move")]
+    for a, b in good:
+        assert lyrics.rhymes_english(a, b) is True, (a, b, lyrics.english_key(a.split()[-1]), lyrics.english_key(b.split()[-1]))
+    for a, b in bad:
+        assert lyrics.rhymes_english(a, b) is False, (a, b)
+    assert lyrics.rhymes_english("नमस्ते", "hello") is None
+    assert "PERFECT rhymes" in lyrics._write_prompt([{"line_en": "x", "visual": ""}] * 2, "en", "line_hi", None, False)

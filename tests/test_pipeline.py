@@ -566,8 +566,8 @@ def test_independent_rhyme_judge_overrides_the_writers_own_claims(monkeypatch):
     assert script["scenes"][3]["line_en"] == "Like a diamond in the sky"   # the writer's wrong Latin "sound" for high/sky
     #                                                                       is overruled by the code check: no rewrite
 
-    script, rep = run(lambda texts, lang, ledger: None)                 # judge unavailable: writer's own check decides
-    assert rep["ok"] and rep["tries"] == 1
+    script, rep = run(lambda texts, lang, ledger: None)                 # judge unavailable: the code check decides
+    assert rep["ok"] and rep["tries"] == 0                              # (high/sky do rhyme: nothing to repair)
 
 
 # ------------------------------------------------------------------ your own clips

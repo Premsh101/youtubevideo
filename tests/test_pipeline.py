@@ -563,7 +563,8 @@ def test_independent_rhyme_judge_overrides_the_writers_own_claims(monkeypatch):
     script, rep = run(strict)
     assert rep["ok"] and rep["tries"] == 1 and calls["n"] == 2          # judged, repaired, judged again
     assert script["scenes"][1]["line_en"].startswith("repaired line 2")   # the second line of the flagged couplet changed
-    assert script["scenes"][3]["line_en"] == "repaired line 4"          # and the couplet the sound-check caught
+    assert script["scenes"][3]["line_en"] == "Like a diamond in the sky"   # the writer's wrong Latin "sound" for high/sky
+    #                                                                       is overruled by the code check: no rewrite
 
     script, rep = run(lambda texts, lang, ledger: None)                 # judge unavailable: writer's own check decides
     assert rep["ok"] and rep["tries"] == 1

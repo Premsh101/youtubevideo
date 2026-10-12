@@ -42,7 +42,7 @@ def _is_quota_error(exc: Exception) -> bool:
     if code in (429, 503):
         return True
     text = str(exc)
-    return any(k in text for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "Quota exceeded", "rate limit"))
+    return any(k in text for k in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "Quota exceeded", "rate limit", "Too Many Requests"))
 
 
 def _pace(kind: str) -> None:

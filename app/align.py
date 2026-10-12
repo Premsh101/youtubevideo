@@ -20,10 +20,10 @@ from .costs import CostLedger
 def _valid(starts: list[float], total: float, n: int) -> bool:
     if len(starts) != n or starts[0] < 0 or starts[-1] >= total - 0.5:
         return False
-    return all(b - a >= 1.0 for a, b in zip(starts, starts[1:]))
+    return all(b - a >= 0.5 for a, b in zip(starts, starts[1:]))
 
 
-def _elevenlabs(song: bytes, lines: list[str]) -> list[float] | None:
+def _elevenlabs(song: bytes, lines: list[str], ledger: CostLedger | None = None, total: float = 0.0) -> list[float] | None:
     key = os.getenv("ELEVENLABS_API_KEY")
     if not key:
         return None
@@ -42,6 +42,8 @@ def _elevenlabs(song: bytes, lines: list[str]) -> list[float] | None:
     r = retry.guarded("tts", _post)
     if r.status_code >= 400:  # e.g. 401/403 when the key lacks Forced Alignment access
         return None
+    if ledger is not None:
+        ledger.stt("forced alignment", total / 60)
     chars = r.json().get("characters") or []
     if len(chars) < len(text) - 2:
         return None
@@ -82,7 +84,7 @@ def line_starts(song_path, lines: list[str], total: float, planned: list[float],
     else:
         song = song_path.read_bytes()
         starts, method = None, "plan"
-        for name, fn in (("elevenlabs", lambda: _elevenlabs(song, lines)), ("gemini", lambda: _gemini(song, lines, ledger))):
+        for name, fn in (("elevenlabs", lambda: _elevenlabs(song, lines, ledger, total)), ("gemini", lambda: _gemini(song, lines, ledger))):
             try:
                 cand = fn()
             except retry.QuotaExhausted:

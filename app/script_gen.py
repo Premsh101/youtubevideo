@@ -143,7 +143,7 @@ No scary, sad or violent wording. Hindi: natural spoken Hindi in Devanagari, not
 Return JSON: {{"title_en": str, "title_hi": str, "mood": "sleepy | calm | playful | energetic", "description_en": str (2 sentences), "description_hi": str,
 "tags": [8 short tags, mixed EN/HI], "about": "one sentence: what the whole video shows",
 "scenes": [{{"index": 0, "line_en": str, "line_hi": str, "is_chorus": bool, "visual": "short description of the segment"}}]}}"""
-    data = generate_json(prompt, ledger, "lyrics for your clips")
+    data = generate_json(prompt, ledger, "lyrics for your clips", validate=lambda d: len(d.get("scenes") or []) == n)
     scenes = data.get("scenes") or []
     if len(scenes) != n:
         raise RuntimeError(f"Gemini returned {len(scenes)} lines for {n} clip segments; press Resume to try again")
@@ -163,7 +163,8 @@ def generate_script(topic: str | None, user_poem: str | None, characters: list[d
                     mode: str, engine: str, target_seconds: int, ledger: CostLedger, mood: str | None = None) -> dict:
     n = scene_count(engine, target_seconds)
     prompt = build_prompt(topic, user_poem, characters, mode, n, engine, mood)
-    data = generate_json(prompt, ledger, "script + scenes")
+    data = generate_json(prompt, ledger, "script + scenes",
+                         validate=lambda d: bool(d.get("scenes")) and all(x.get("line_en") and x.get("line_hi") for x in d["scenes"]))
     scenes = data.get("scenes") or []
     if not scenes:
         raise RuntimeError("Gemini returned no scenes")

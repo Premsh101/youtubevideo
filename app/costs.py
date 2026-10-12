@@ -89,6 +89,8 @@ def estimate(num_scenes: int, engine: str, languages: list[str], chars_per_lang:
     for lang in languages:
         if vocals == "sung":
             led.sung(lang, seconds / 60)
+            led.stt(f"{lang} lyric check", seconds / 60)
         else:
             led.tts(lang, chars_per_lang)
+        led.text(f"{lang} title & description", 1200, 500)
     return led.summary()

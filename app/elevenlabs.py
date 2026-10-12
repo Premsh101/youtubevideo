@@ -44,13 +44,20 @@ def _styles(lang: str, mode: str, voice: str = "female", mood: str = "playful") 
     return pos, list(md["neg"])
 
 
+def chunk_seconds(durations: list[float], xfade: float = 0.0) -> list[float]:
+    """What each song section really lasts: scene lengths include the cross-fade overlap with the next scene,
+    a song section must not (otherwise every planned line start drifts one cross-fade later per scene)."""
+    secs = [max(3.0, min(120.0, d - xfade)) for d in durations[:-1]] + [max(3.0, min(120.0, durations[-1]))]
+    return [round(x, 3) for x in secs]
+
+
 def build_plan(scenes: list[dict], durations: list[float], lang: str, mode: str, voice: str = "female",
-               mood: str = "playful") -> dict:
+               mood: str = "playful", xfade: float = 0.0) -> dict:
     key = f"line_{lang}"
     md = moods.get(mood)
     pos, neg = _styles(lang, mode, voice, mood)
     chunks = []
-    for s, d in zip(scenes, durations):
+    for s, d in zip(scenes, chunk_seconds(durations, xfade)):
         chorus = bool(s.get("is_chorus")) and md["section"] == "Verse"   # lullabies have no shouted chorus
         label = "Chorus" if chorus else md["section"]
         cue = f" {{{md['cue']}}}" if md["cue"] else ""     # {curly braces} = a direction to the singer, not a lyric
@@ -65,9 +72,9 @@ def build_plan(scenes: list[dict], durations: list[float], lang: str, mode: str,
 
 
 def compose(scenes: list[dict], durations: list[float], lang: str, mode: str, ledger: CostLedger,
-            voice: str = "female", take: int = 0, mood: str = "playful", attempt: int = 0) -> Path:
+            voice: str = "female", take: int = 0, mood: str = "playful", attempt: int = 0, xfade: float = 0.0) -> Path:
     """One song. `take` is the owner's "new take" counter; `attempt` is our own retry when the singer changed the words."""
-    plan = build_plan(scenes, durations, lang, mode, voice, mood)
+    plan = build_plan(scenes, durations, lang, mode, voice, mood, xfade)
     minutes = sum(c["duration_ms"] for c in plan["chunks"]) / 60000
     key = hashlib.sha256(json.dumps([MODEL, plan] + ([take] if take else []) + ([f"a{attempt}"] if attempt else []),
                                     sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
@@ -207,7 +214,7 @@ def match_lyrics(words: list[dict], lines: list[str], planned_starts: list[float
         else:
             starts.append(planned_starts[i])
     for i in range(1, len(starts)):                       # keep the order sane when a line was not heard at all
-        starts[i] = max(starts[i], starts[i - 1] + 0.5)
+        starts[i] = max(starts[i], starts[i - 1] + 1.0)
     sung = []
     for i in range(len(lines)):
         lo, hi = starts[i] - 0.15, (starts[i + 1] - 0.15) if i + 1 < len(lines) else total + 1

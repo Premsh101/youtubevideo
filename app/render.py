@@ -92,7 +92,7 @@ def fit_clip(clip: Path, duration: float, out: Path) -> Path:
     # frames are renumbered at a constant rate before trimming, so every scene is EXACTLY round(d×fps) frames
     # long — otherwise a frame or two lost per scene would add up and pull the audio out of sync
     n_frames = max(1, round(duration * fps))
-    tail = f"tpad=stop_mode=clone:stop_duration=0.3,fps={fps},setpts=N/{fps}/TB,trim=end_frame={n_frames}"
+    tail = f"tpad=stop_mode=clone:stop_duration=0.125,fps={fps},setpts=N/{fps}/TB,trim=end_frame={n_frames}"
     if f < 0.8:
         vf = f"{fit},setpts=PTS-STARTPTS,fps={fps},setpts=N/{fps}/TB,trim=end_frame={n_frames}"
     elif f <= INVISIBLE_STRETCH:

@@ -42,7 +42,7 @@ def _hash(*parts: str | bytes) -> str:
 
 # --------------------------------------------------------------------------- text
 def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = True,
-                  media: list[Path] | None = None) -> dict:
+                  media: list[Path] | None = None, validate=None) -> dict:
     """Ask Gemini for strict JSON. Cached by prompt (+ attached video) hash so re-runs are free.
     `media`: small video files Gemini should watch while answering."""
     key = _hash("json", config.TEXT_MODEL, prompt, *[m.read_bytes() for m in (media or [])])
@@ -73,6 +73,8 @@ def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = Tr
         usage = resp.usage_metadata
         ledger.text(detail, usage.prompt_token_count or 0, usage.candidates_token_count or 0)
         data = _parse_json(resp.text)
+    if validate is not None and not validate(data):     # never cache a wrong answer: a retry must be able to differ
+        raise RuntimeError(f"Gemini returned an unusable answer for {detail}; please retry")
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=1))
     return data
@@ -172,7 +174,7 @@ def generate_video_clip(prompt: str, first_frame: Path, last_frame: Path | None,
     ))
     while not op.done:
         time.sleep(8)
-        op = client().operations.get(op)
+        op = retry.guarded("veo", lambda: client().operations.get(op))   # a 429 while polling must pause, not fail
     if op.error:
         raise RuntimeError(f"Veo failed: {op.error}")
     vid = op.response.generated_videos[0].video

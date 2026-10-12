@@ -143,8 +143,8 @@ def _char_background(cid: str, fn, wait: bool) -> dict:
     if _char_busy.get(cid, {}).get("running"):
         raise HTTPException(409, "still drawing this character")
     if wait:
-        fn()
-        return {"ok": True, "pending": False}
+        led = fn()
+        return {"ok": True, "pending": False, "cost": led.summary() if led is not None else None}
     _char_busy[cid] = {"running": True, "error": None}
 
     def go():
@@ -165,7 +165,9 @@ def api_character_sheet(cid: str, mode: Literal["2d", "3d"] = "2d", regenerate: 
             p = characters.sheet_path(cid)
             if p:
                 p.unlink()
-        characters.ensure_sheet(cid, mode, CostLedger())
+        ledger = CostLedger()
+        characters.ensure_sheet(cid, mode, ledger)
+        return ledger
     return _char_background(cid, fn, wait) | {"sheet_url": f"/api/characters/{cid}/sheet.png"}
 
 
@@ -192,6 +194,7 @@ def api_character_sprite(cid: str, mode: Literal["2d", "3d"] = "3d", regenerate:
         ledger = CostLedger()
         characters.ensure_sheet(cid, mode, ledger)
         cutout.ensure_sprite(cid, mode, ledger, force=regenerate)
+        return ledger
     return _char_background(cid, fn, wait) | {"sprite_url": f"/api/characters/{cid}/sprite.png"}
 
 

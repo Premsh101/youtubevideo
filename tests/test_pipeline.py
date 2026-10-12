@@ -57,7 +57,7 @@ def test_full_job_both_languages_with_auto_casting():
     assert j["cast"] and j["cast"][0]["name"] == "Tara"       # Gemini invented a character…
     lib = client.get("/api/characters").json()
     assert len(lib) == 1 and lib[0]["has_sheet"]              # …and it was saved for reuse
-    r = client.post(f"/api/characters/{lib[0]['id']}/sheet?mode=2d").json()
+    r = client.post(f"/api/characters/{lib[0]['id']}/sheet?wait=true&mode=2d").json()
     assert r["cost"]["total_usd"] == 0                        # sheet is cached → free next time
     d = config.OUTPUT_DIR / job["id"]
     for lang in ("en", "hi"):

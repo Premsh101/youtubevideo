@@ -39,7 +39,7 @@ def _keyness(rgb: np.ndarray, key: str) -> np.ndarray:
     """0 = definitely subject, 1 = definitely key-coloured background (works for dark/light key shades)."""
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
     if key == "green":
-        return _smooth(g - np.maximum(r, b), 35, 105)
+        return _smooth(g - np.maximum(r, b), 60, 125) * (g > 150)   # grass green #8BE78B (diff 92) must survive
     if key == "magenta":
         return _smooth(np.minimum(r, b) - g, 60, 130)
     return _smooth(b - np.maximum(r, g), 55, 125)

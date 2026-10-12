@@ -35,6 +35,7 @@ video{width:100%;border-radius:12px;background:#000}
 .lyrics{font-size:13px;columns:2;column-gap:18px}.lyrics div{break-inside:avoid;margin-bottom:6px;padding:4px 6px;background:#fafafa;border-radius:6px}
 .jobs{font-size:13px}.jobs a{cursor:pointer;color:#0a66c2}
 .kf{display:flex;gap:4px;overflow-x:auto;margin:8px 0}.kf img{height:54px;border-radius:6px}
+@media(max-width:600px){.seg{flex-wrap:wrap}.seg button{flex:1 1 100%}#accounts{margin-left:16px;margin-right:16px}}
 </style>
 </head>
 <body>
@@ -101,7 +102,7 @@ video{width:100%;border-radius:12px;background:#000}
 </section>
 </main>
 <script>
-const $=s=>document.querySelector(s);const api=(u,o)=>fetch(u,o).then(async r=>{if(!r.ok)throw new Error((await r.text())||r.status);return r.json()});
+const $=s=>document.querySelector(s);const api=(u,o)=>fetch(u,o).then(async r=>{if(!r.ok){let m=await r.text();try{const d=JSON.parse(m).detail;m=typeof d==='string'?d:JSON.stringify(d)}catch(e){}throw new Error(m||String(r.status))}return r.json()});
 let moodSel='auto',cfg={},selected=new Set(),mode='3d',engine='images',vocals='tts',src='famous',charMode='auto',current=null,poll=null;
 const inr=v=>'₹'+Number(v).toFixed(2);
 
@@ -117,7 +118,8 @@ function params(){const languages=[...document.querySelectorAll('#langs input:ch
  if(src==='clips')return{mode:'2d',engine:'clips',vocals,mood:moodSel,languages,lyrics_on_screen:$('#lyricsOn').checked,bookends:$('#bookendsOn').checked,clips:clipOrder.filter(id=>clipSel.has(id)),topic:$('#clipTopic').value.trim()||null,poem:$('#clipPoem').value.trim()||null,target_seconds:120}
  return{mode,engine,vocals,mood:moodSel,languages,lyrics_on_screen:$('#lyricsOn').checked,bookends:$('#bookendsOn').checked,character_mode:charMode,characters:charMode==='library'?[...selected]:[],character_description:charMode==='describe'?($('#charDesc').value.trim()||null):null,preset:src==='famous'?$('#preset').value:null,topic:src==='auto'?($('#topic').value||null):null,poem:src==='own'?($('#poem').value||null):null,target_seconds:+$('#len').value}}
 
-async function estimate(){try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});
+let estSeq=0;
+async function estimate(){const seq=++estSeq;try{const e=await api('/api/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(params())});if(seq!==estSeq)return;
  $('#est').innerHTML=src==='clips'?(e.scenes?`Estimated: <b>${e.scenes} lyric lines</b> over your footage · about <b>${inr(e.total_inr)}</b> (Gemini watching + lyrics + voice; no pictures to draw)`:'Select at least one clip'):`Estimated: <b>${e.scenes} scenes</b> · about <b>${inr(e.total_inr)}</b> (${engine==='veo'?'Veo clips are the main cost':'images + voice only'}; cached assets are free)`}catch(err){$('#est').textContent=''}}
 
 let clipLib=[],clipSel=new Set(),clipOrder=[];
@@ -129,37 +131,42 @@ function renderClips(){const by=Object.fromEntries(clipLib.map(c=>[c.id,c]));
   <img src="${c.thumb_url}" style="height:42px;border-radius:6px"><div style="flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(c.name)}</b><br><span class="est" style="margin:0">${c.duration.toFixed(1)} s · ${c.width}×${c.height}${c.width<c.height?' · vertical':''}${c.has_audio?' · sound muted':''}</span></div>
   <button class="small" style="padding:2px 7px" ${i?'':'disabled'} onclick="clipMove(${i},-1)" title="Earlier">↑</button><button class="small" style="padding:2px 7px" ${i<clipOrder.length-1?'':'disabled'} onclick="clipMove(${i},1)" title="Later">↓</button>
   <button class="small" style="padding:2px 7px" onclick="clipDel('${id}','${esc(c.name).replace(/'/g,'')}')" title="Delete from library">🗑</button></div>`}).join(''):'<div class="est">No clips yet — upload some above.</div>';
- const n=clipOrder.filter(id=>clipSel.has(id)).length;$('#clipProg').textContent=n?`${n} clip(s) selected, they play in the order shown.`:$('#clipProg').textContent}
+ const sel=clipOrder.filter(id=>clipSel.has(id)),n=sel.length,secs=sel.reduce((a,id)=>a+(by[id]?by[id].duration:0),0);
+ $('#clipProg').textContent=n?`${n} clip(s) selected · ${Math.round(secs)} s of 600 s${secs>600?' — too long: untick some clips':''}, they play in the order shown.`:$('#clipProg').textContent;
+ $('#go').disabled=src==='clips'&&secs>600}
 function clipTick(id,on){on?clipSel.add(id):clipSel.delete(id);renderClips();estimate()}
 function clipMove(i,d){const j=i+d;if(j<0||j>=clipOrder.length)return;[clipOrder[i],clipOrder[j]]=[clipOrder[j],clipOrder[i]];renderClips();estimate()}
-async function clipDel(id,name){if(!confirm(`Delete “${name}” from your clip library? Videos already made keep their own copy.`))return;await api('/api/clips/'+id,{method:'DELETE'});clipSel.delete(id);loadClips()}
-async function clipUpload(files){const list=[...files];for(let k=0;k<list.length;k++){const f=list[k];$('#clipProg').textContent=`Uploading ${k+1}/${list.length}: ${f.name} …`;
+async function clipDel(id,name){if(!confirm(`Delete “${name}” from your clip library? Videos already made keep their own copy.`))return;try{await api('/api/clips/'+id,{method:'DELETE'})}catch(e){return alert(e.message)}clipSel.delete(id);loadClips()}
+async function clipUpload(files){const list=[...files];for(let k=0;k<list.length;k++){const f=list[k];if(f.size>300*1024*1024){alert(`${f.name} is ${Math.round(f.size/1048576)} MB; clips must be under 300 MB (cut or compress it first)`);continue}$('#clipProg').textContent=`Uploading ${k+1}/${list.length}: ${f.name} …`;
   const fd=new FormData();fd.append('file',f);try{const r=await fetch('/api/clips',{method:'POST',body:fd});if(!r.ok){let m=await r.text();try{m=JSON.parse(m).detail||m}catch(e){}throw new Error(m)}const c=await r.json();clipSel.add(c.id);clipLib.push(c);clipOrder.push(c.id);renderClips()}
   catch(e){alert(`${f.name}: ${e.message}`)}}
- await loadClips();$('#clipFiles').value=''}
+ $('#clipProg').textContent='';await loadClips();$('#clipFiles').value=''}
 $('#clipFiles').onchange=e=>clipUpload(e.target.files);
 const drop=$('#clipDrop');drop.ondragover=e=>{e.preventDefault();drop.style.background='#eef7ff'};drop.ondragleave=()=>drop.style.background='';drop.ondrop=e=>{e.preventDefault();drop.style.background='';clipUpload(e.dataTransfer.files)};
 async function loadChars(){const cs=await api('/api/characters');
- $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${c.id}" title="${c.personality}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${c.name}</b><br>${c.species}<br>${c.sprite_url?`<span title="Cut-out used by the Animated cut-outs engine" style="display:inline-block;vertical-align:middle;background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/10px 10px;border-radius:6px"><img src="${c.sprite_url}?t=${Date.now()}" style="height:34px;width:auto;aspect-ratio:auto"></span> <button class="small" style="padding:2px 6px" title="Cut-out looks wrong? Draw it again (about ₹3)" onclick="event.stopPropagation();redoSprite('${c.id}')">🔄</button> `:''}<button class="small" style="margin-top:4px;padding:2px 8px" onclick="event.stopPropagation();delChar('${c.id}','${c.name.replace(/'/g,'')}')">🗑</button></div>`).join(''):'<i class="est">Library is empty — use “Let Gemini create” or “Describe” first; those characters are saved here.</i>';
+ $('#chars').innerHTML=cs.length?cs.map(c=>`<div class="char ${selected.has(c.id)?'on':''}" data-id="${esc(c.id)}" title="${esc(c.personality)}">${c.sheet_url?`<img src="${c.sheet_url}?t=${Date.now()}">`:'<div class="ph">no sheet yet</div>'}<b>${esc(c.name)}</b><br>${esc(c.species)}<br>${c.sprite_url?`<span title="Cut-out used by the Animated cut-outs engine" style="display:inline-block;vertical-align:middle;background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/10px 10px;border-radius:6px"><img src="${c.sprite_url}?t=${Date.now()}" style="height:34px;width:auto;aspect-ratio:auto"></span> <button class="small" style="padding:2px 6px" title="Cut-out looks wrong? Draw it again (about ₹3)" onclick="event.stopPropagation();redoSprite('${c.id}')">🔄</button> `:''}<button class="small" style="margin-top:4px;padding:2px 8px" onclick="event.stopPropagation();delChar(${esc(JSON.stringify(c.id))},${esc(JSON.stringify(String(c.name||'')))})">🗑</button></div>`).join(''):'<i class="est">Library is empty — use “Let Gemini create” or “Describe” first; those characters are saved here.</i>';
  document.querySelectorAll('.char').forEach(el=>el.onclick=()=>{const id=el.dataset.id;if(!selected.has(id)&&selected.size>=2)return alert('Up to 2 characters per video');selected.has(id)?selected.delete(id):selected.add(id);el.classList.toggle('on');cnt()});
  for(const id of [...selected])if(!cs.some(c=>c.id===id))selected.delete(id);cnt()}
 function engineHint(){$('#engineHint').textContent={images:'Slideshow of AI pictures with a slow camera move. Cheapest, least motion.',cutout:'Backgrounds and characters are drawn separately and animated by code: hops, wiggles and sparkles on the beat, props pop on their word. Characters and backgrounds are reused across videos, so it gets cheaper as your library grows. Works best in 2D.',veo:'AI video clips. Most expensive; each scene is one 8 s clip.'}[engine]||''}
 function cnt(){$('#charCount').textContent=charMode==='library'?selected.size+' selected':charMode==='describe'?'your description':'Gemini decides'}
 async function redoSprite(id){if(!confirm('Draw this character’s animated cut-out again? (about ₹3; use it if the cut-out has leftover background or missing parts)'))return;
  try{await api(`/api/characters/${id}/sprite?mode=${mode}&regenerate=true`,{method:'POST'});loadChars()}catch(e){alert(e.message)}}
-async function delChar(id,name){if(!confirm(`Delete ${name} from the library? Videos already made are not affected.`))return;await api('/api/characters/'+id,{method:'DELETE'});selected.delete(id);loadChars()}
+async function delChar(id,name){if(!confirm(`Delete ${name} from the library? Videos already made are not affected.`))return;try{await api('/api/characters/'+id,{method:'DELETE'})}catch(e){return alert(e.message)}selected.delete(id);loadChars()}
 
 
-$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language');if(src==='clips'&&!p.clips.length)return alert('Upload and tick at least one clip');if(charMode==='library'&&!p.characters.length)return alert('Pick at least one character from the library');if(charMode==='describe'&&!p.character_description)return alert('Describe your character first'); if(!confirm(src==='clips'?`Create a video from ${p.clips.length} of your clips in ${p.languages.join(' + ')}?`:`Create a ${mode.toUpperCase()} video with the ${engine==='veo'?'Veo (premium)':'keyframe (cheap)'} engine in ${p.languages.join(' + ')}?`))return;
- $('#go').disabled=true;const j=await api('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(p)});watch(j.id)};
+$('#go').onclick=async()=>{const p=params();if(!p.languages.length)return alert('Pick a language');if(src==='clips'&&!p.clips.length)return alert('Upload and tick at least one clip');if(charMode==='library'&&!p.characters.length)return alert('Pick at least one character from the library');if(charMode==='describe'&&!p.character_description)return alert('Describe your character first'); if(!confirm(src==='clips'?`Create a video from ${p.clips.length} of your clips in ${p.languages.join(' + ')}?`:`Create a ${mode.toUpperCase()} video with the ${({veo:'Veo (premium)',cutout:'animated cut-outs',images:'keyframe (cheap)'})[engine]||engine} engine in ${p.languages.join(' + ')}?`))return;
+ $('#go').disabled=true;try{const j=await api('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(p)});watch(j.id)}catch(e){$('#go').disabled=false;alert(e.message)}};
 
-function watch(id){current=id;$('#progressCard').style.display='';$('#resultCard').style.display='none';clearInterval(poll);poll=setInterval(tick,1500);tick()}
-async function tick(){const j=await api('/api/jobs/'+current);$('#pBar').style.width=(j.progress*100)+'%';$('#pStep').textContent=j.step+(j.cost?` · spent so far ${inr(j.cost.total_inr)}`:'');
+function watch(id){current=id;$('#go').disabled=true;$('#progressCard').style.display='';if(!(lastJob&&lastJob.id===id&&Object.keys(lastJob.outputs||{}).length))$('#resultCard').style.display='none';clearInterval(poll);poll=setInterval(tick,1500);tick()}
+let tickFails=0;
+async function tick(){let j;try{j=await api('/api/jobs/'+current);tickFails=0}catch(e){if(++tickFails<4)return;clearInterval(poll);poll=null;$('#go').disabled=false;$('#progressCard').style.display='none';alert('Lost contact with the video: '+e.message);loadJobs();return}
+ $('#pBar').style.width=(j.progress*100)+'%';$('#pStep').textContent=j.step+(j.cost?` · spent so far ${inr(j.cost.total_inr)}`:'');
  if(j.script)$('#pTitle').textContent=j.script.title_en+' / '+(j.script.title_hi||'');
- if(j.status==='done'||j.status==='error'||j.status==='paused'){clearInterval(poll);$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs();loadChars()}}
+ if(j.status==='done'||j.status==='error'||j.status==='paused'){clearInterval(poll);poll=null;$('#go').disabled=false;$('#progressCard').style.display='none';render(j);loadJobs();loadChars()}}
 
 function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTimeout(langCost,0);
- if(j.status==='error'||j.status==='paused'){const quota=/429|RESOURCE_EXHAUSTED|quota/i.test(j.error||'');
+ const broken=(j.status==='error'||j.status==='paused')&&!Object.keys(j.outputs||{}).length;
+ if(broken){const quota=/429|RESOURCE_EXHAUSTED|quota/i.test(j.error||'');
   c.innerHTML=`<h2>${j.status==='paused'?'⏸ Paused — Google quota exhausted':'Something went wrong'}</h2>
   ${quota?`<div class="est" style="margin-bottom:8px">Vertex AI rejected requests with <b>429 RESOURCE_EXHAUSTED</b> (per-minute quota). <b>Nothing is wasted</b>: every image, script and voice line already generated is cached, so Resume only pays for the missing parts. Spent so far across attempts: <b>${inr((j.cost||{}).total_inr_all_attempts||0)}</b>. To raise the limit: GCP console → IAM &amp; Admin → Quotas → filter "Vertex AI" + your image model → Edit quota.</div>`:''}
   <div class="row" style="margin-bottom:8px"><button class="small" onclick="resume_('${j.id}')">▶ Resume (reuses cached parts)</button><button class="small" onclick="del_('${j.id}')">🗑 Delete</button></div>
@@ -181,14 +188,15 @@ function render(j){lastJob=j;const c=$('#resultCard');c.style.display='';setTime
   <div class="row"><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.video}?download=1">⬇ Download MP4</a><a class="small" style="text-decoration:none;color:inherit" href="/api/jobs/${j.id}/files/${o.captions}?download=1">⬇ Captions</a>
   <button class="small" onclick="setLyrics('${j.id}','${lang}',${o.lyrics_on_screen?'false':'true'})">${o.lyrics_on_screen?'🚫 Remove on-screen lyrics':'🔤 Add on-screen lyrics'}</button>
 </div>${vocalsBox(j,lang,o)}${pubBox(j,lang,o)}</div>`).join('');
- c.innerHTML=`<h2>${s.title_en||'Your video'} ${s.title_hi?'· '+s.title_hi:''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
+ const problem=j.last_error||((j.status==='error'||j.status==='paused')?(j.error||j.step||''):'');
+ c.innerHTML=`${problem?`<div class="warnbox" style="background:#ffe3e3;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:13px">⚠ <b>${j.status==='paused'?'Paused (quota): some languages are not finished yet.':'The last step failed; the finished parts below are intact.'}</b> ${esc(String(problem).split('\n')[0].slice(0,300))}${j.status==='paused'||j.status==='error'?` <button class="small" onclick="resume_('${j.id}')">▶ Resume</button>`:''}</div>`:''}<h2>${esc(s.title_en||'Your video')} ${s.title_hi?'· '+esc(s.title_hi):''} <span class="badge">${(j.params||{}).mode}</span> <span class="badge">${(j.params||{}).engine}</span> <span class="badge">${(j.params||{}).vocals==='sung'?'🎤 sung':'🗣 spoken'}</span></h2>
   ${s.known_rhyme?`<div class="${s.copyrighted?'warnbox':'est'}" style="${s.copyrighted?'background:#fff3c4;border-radius:10px;padding:8px 10px;':''}margin:0 0 8px;font-size:13px">${s.copyrighted?`⚠ <b>“${esc(s.known_rhyme)}”</b> is a copyrighted song, so Gemini wrote a <b>new rhyme on the same theme</b> instead of copying it (copying could get the video blocked or demonetised). If you hold the rights or want the real words anyway, paste them under <i>My own poem</i>.`:`🎵 Based on the classic <b>“${esc(s.known_rhyme)}”</b>.`}</div>`:''}
-  ${(j.cast||[]).length?`<div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${c.name}</b> the ${c.species}`).join(', ')}</div>`:''}
+  ${(j.cast||[]).length?`<div class="est" style="margin:0 0 8px">Cast: ${(j.cast||[]).map(c=>`<b>${esc(c.name)}</b> the ${esc(c.species)}`).join(', ')}</div>`:''}
   ${((j.clips_plan||{}).warnings||[]).length?`<div class="warnbox" style="background:#fff3c4;border-radius:10px;padding:8px 10px;margin:0 0 8px;font-size:13px">⚠ <b>Check your footage before publishing:</b><ul style="margin:4px 0 0 18px;padding:0">${j.clips_plan.warnings.map(w=>`<li><b>${esc(w.clip)}</b>: ${esc(w.note)}</li>`).join('')}</ul></div>`:''}
   <div class="out">${outs}</div>
 
   <div class="kf">${(j.keyframes||[]).map(k=>`<img src="/api/jobs/${j.id}/files/${k}">`).join('')}</div>
-  <h3>Lyrics</h3><div class="lyrics">${(s.scenes||[]).map(x=>`<div>${x.line_en}<br><span style="color:#777">${x.line_hi||''}</span></div>`).join('')}</div>
+  <h3>Lyrics</h3><div class="lyrics">${(s.scenes||[]).map(x=>`<div>${esc(x.line_en)}<br><span style="color:#777">${esc(x.line_hi||'')}</span></div>`).join('')}</div>
   <div class="row" style="margin-top:10px;padding:10px;background:#f4fbff;border-radius:12px">
    <b style="font-size:14px">🌐 Create in another language</b>
    <select id="addLang" style="width:auto;flex:1" onchange="langCost(${esc(JSON.stringify(j.id))})">${LANGS.filter(l=>!(j.outputs||{})[l.code]).map(l=>`<option value="${l.code}">${l.name}${l.native!==l.name?' · '+l.native:''}</option>`).join('')}</select>
@@ -217,24 +225,25 @@ function lyricsBadge(o){const m=o.lyrics_match;if(!m||m.checked===false&&m.ok===
  if(m.ok)return`<span class="badge" style="background:#dff5df" title="${Math.round(m.match*100)}% of the lyric words were heard in the song">✓ sung as written</span> `;
  return`<span class="badge" style="background:#ffe3e3" title="The singer changed words (${Math.round(m.match*100)}% kept${m.retried?', even after a second take':''}); the words on screen follow what is actually sung. Use Change vocals → new take for another try.">⚠ singer changed words · screen follows song</span> `}
 function moodOf(j){return j.mood||(j.script||{}).mood||'playful'}
-function vocalsBox(j,lang,o){const v=o.vocals||{mode:(j.params||{}).vocals||'tts',voice:'female'};const id=esc(JSON.stringify(j.id)),l=esc(JSON.stringify(lang));
+function sungInr(o){const p=cfg.prices_usd||{},m=((o&&o.duration)||120)/60;return inr(m*((p.sung_per_minute||0.21)+(p.stt_per_minute||0))*(cfg.usd_to_inr||84))}
+function vocalsBox(j,lang,o){const v=o.vocals||{mode:(j.params||{}).vocals||'tts',voice:'female'};const id=esc(JSON.stringify(j.id)),l=esc(JSON.stringify(lang));const sp=sungInr(o);
  const opt=(val,txt)=>`<option value="${val}"${val===v.mode+':'+v.voice?' selected':''}>${txt}</option>`;
  const mc=o.mood_check,warn=mc&&mc.measured&&!mc.ok?`<div class="warnbox" style="background:#fff3c4;border-radius:10px;padding:6px 10px;margin:6px 0;font-size:13px">⚠ This audio is busier than a <b>${((cfg.moods||[]).find(m=>m.id===mc.mood)||{}).label||mc.mood}</b> should be (${mc.hits_per_second} musical hits/second). Open <b>Change vocals</b> and tick <i>new take</i> to try again.</div>`:'';
  return `${warn}<details style="margin:6px 0"><summary style="cursor:pointer;font-size:13px">🎙 Change vocals <span style="color:#777">(now: ${v.mode==='sung'?'🎤 sung':'🗣 spoken'} · ${v.voice==='male'?'male':'female'} · ${((cfg.moods||[]).find(m=>m.id===(v.mood||moodOf(j)))||{}).label||''})</span></summary>
-  <div class="row" style="margin-top:6px"><select id="voc_${lang}" style="width:auto;flex:1">${opt('tts:female','🗣 Spoken · female (≈₹3)')}${opt('tts:male','🗣 Spoken · male (≈₹3)')}${opt('sung:female','🎤 Sung · female (≈₹25)')}${opt('sung:male','🎤 Sung · male (≈₹25)')}</select>
+  <div class="row" style="margin-top:6px"><select id="voc_${lang}" style="width:auto;flex:1">${opt('tts:female','🗣 Spoken · female (≈₹3)')}${opt('tts:male','🗣 Spoken · male (≈₹3)')}${opt('sung:female',`🎤 Sung · female (≈${sp})`)}${opt('sung:male',`🎤 Sung · male (≈${sp})`)}</select>
   <select id="vocm_${lang}" style="width:auto"><option value="same">Mood: same as video (${esc((cfg.moods||[]).find(m=>m.id===moodOf(j))?.label||'')})</option>${(cfg.moods||[]).map(m=>`<option value="${m.id}"${v.mood===m.id&&v.mood!==moodOf(j)?' selected':''}>${m.label}</option>`).join('')}</select>
   <label style="font-size:13px"><input type="checkbox" id="voct_${lang}"> new take (sung: a different song)</label>
   <button class="small" onclick="changeVocals(${id},${l})">🎙 Re-voice</button></div>
   <div class="est" style="margin:4px 0 0">Pictures and lyrics are reused; only the new voice/song is paid for. The current video stays until the new one is ready; your publish history is kept.</div></details>`}
 async function changeVocals(id,lang){const [mode,voice]=$('#voc_'+lang).value.split(':'),take=$('#voct_'+lang).checked;
- if(!confirm(`Re-voice the ${LNAME(lang)} version as ${mode==='sung'?'a sung song':'a spoken rhyme'} (${voice})?\n\nOnly the new audio is paid for; pictures are reused.${mode==='sung'?'\nSung ≈ ₹25 per language.':''}`))return;
+ if(!confirm(`Re-voice the ${LNAME(lang)} version as ${mode==='sung'?'a sung song':'a spoken rhyme'} (${voice})?\n\nOnly the new audio is paid for; pictures are reused.${mode==='sung'?'\nSung ≈ '+sungInr((lastJob&&lastJob.outputs||{})[lang])+' (song + lyric check).':''}`))return;
  try{await api(`/api/jobs/${id}/vocals/${lang}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,voice,mood:$('#vocm_'+lang).value,new_take:take})});watch(id)}catch(e){alert(e.message)}}
 function pubBox(j,lang,o){const pub=o.published||{};if(o.youtube&&!pub.youtube)pub.youtube={status:'done',...o.youtube};
  const ytOk=!!(SOC.youtube.channels[lang]||SOC.youtube.channels.default),mOk=!!SOC.meta.connected,igOk=!!SOC.meta.instagram;
  const avail={youtube:ytOk,youtube_short:ytOk,facebook:mOk,instagram:igOk};
  const row=t=>{const p=pub[t]||{},[ic,nm]=PLAT[t];const st=p.status==='done'?`<a href="${p.url}" target="_blank">✓ posted${p.privacy?' ('+p.privacy+')':''}</a>`:p.status==='uploading'?'⏳ uploading…':p.status==='queued'?'⏳ queued':p.status==='error'?`<span style="color:#c00" title="${esc(p.error)}">✗ failed — hover for reason</span>`:(avail[t]?'':'<span class="est" style="margin:0">not connected</span>');
   return `<label style="display:flex;gap:6px;align-items:center;margin:3px 0;color:var(--ink);font-size:13px"><input type="checkbox" class="pt-${j.id}-${lang}" value="${t}" ${avail[t]&&p.status!=='done'?'checked':''} ${avail[t]?'':'disabled'}> ${ic} ${nm} <span style="margin-left:auto">${st}</span></label>`};
- return `<div style="margin-top:8px;padding:8px 10px;border:1px dashed #cfe3f7;border-radius:10px">
+ return `<div id="pub-${esc(j.id)}-${esc(lang)}" style="margin-top:8px;padding:8px 10px;border:1px dashed #cfe3f7;border-radius:10px">
   <b style="font-size:13px">🚀 Publish ${LNAME(lang)}</b>${Object.keys(PLAT).map(row).join('')}
   <div class="row" style="margin-top:4px"><select id="pv-${j.id}-${lang}" style="width:auto;font-size:13px"><option value="private">YouTube: private</option><option value="unlisted">unlisted</option><option value="public">public</option></select>
   <input type="datetime-local" id="pa-${j.id}-${lang}" title="Optional: schedule the YouTube video to go public at this time" style="width:auto;font-size:13px;padding:6px">
@@ -244,8 +253,13 @@ async function publishNow(id,lang,btn){const targets=[...document.querySelectorA
  const privacy=$(`#pv-${id}-${lang}`).value,when=$(`#pa-${id}-${lang}`).value;let publish_at=null;
  if(when){const d=new Date(when);if(d<=new Date())return alert('Pick a future time');publish_at=d.toISOString()}
  if(!confirm(`Publish ${LNAME(lang)} to: ${targets.map(t=>PLAT[t][1]).join(', ')}?${publish_at?'\nYouTube goes public at '+new Date(publish_at).toLocaleString():targets.some(t=>t.startsWith('youtube'))?'\nYouTube privacy: '+privacy:''}${targets.some(t=>t==='facebook'||t==='instagram')?'\nFacebook/Instagram posts are public immediately.':''}`))return;
- btn.disabled=true;try{await api(`/api/jobs/${id}/publish/${lang}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({targets,privacy,publish_at})});pollPub(id)}catch(e){alert(e.message);btn.disabled=false}}
-function pollPub(id){const t=setInterval(async()=>{const j=await api('/api/jobs/'+id);render(j);const busy=Object.values(j.outputs||{}).some(o=>Object.values(o.published||{}).some(p=>['queued','uploading'].includes(p.status)));if(!busy){clearInterval(t);loadJobs()}},3000)}
+ btn.disabled=true;const send=async force=>api(`/api/jobs/${id}/publish/${lang}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({targets,privacy,publish_at,force})});
+ try{try{await send(false)}catch(e){if(!/footage warnings/.test(e.message))throw e;if(!confirm(`Gemini flagged your footage:\n${e.message.replace('footage warnings: ','')}\n\nPublish anyway?`))throw new Error('Not published.');await send(true)}pollPub(id)}catch(e){alert(e.message);btn.disabled=false}}
+let pubTimer=null;
+function pollPub(id){clearInterval(pubTimer);pubTimer=setInterval(async()=>{let j;try{j=await api('/api/jobs/'+id)}catch(e){clearInterval(pubTimer);return}
+ for(const [lang,o] of Object.entries(j.outputs||{})){const el=document.getElementById(`pub-${j.id}-${lang}`);if(el){const tmp=document.createElement('div');tmp.innerHTML=pubBox(j,lang,o);el.replaceWith(tmp.firstElementChild)}}
+ if(lastJob&&lastJob.id===j.id)lastJob=j;
+ const busy=Object.values(j.outputs||{}).some(o=>Object.values(o.published||{}).some(p=>['queued','uploading'].includes(p.status)));if(!busy){clearInterval(pubTimer);loadJobs()}},3000)}
 function toggleAccounts(){const a=$('#accounts');a.style.display=a.style.display==='none'?'':'none';if(a.style.display==='')loadAccounts()}
 async function loadAccounts(){SOC=await api('/api/social/status');const a=$('#accounts');const ch=SOC.youtube.channels,m=SOC.meta;
  const ytRows=Object.entries(ch).map(([slot,c])=>`<div class="row" style="margin:4px 0">▶ <b>${esc(c.title||'channel')}</b> <span class="badge">${slot==='default'?'all languages':'only '+LNAME(slot)}</span><button class="small" onclick="disc('youtube/${slot}')">Disconnect</button></div>`).join('')||'<div class="est">No channel connected yet.</div>';
@@ -274,23 +288,23 @@ async function loadBranding(){const b=await api('/api/branding');const box=$('#b
   ${b.logo?'':`<div class="row" style="margin-top:6px"><button class="small" onclick="applyLogoAll()">✨ Apply intro/outro to all existing videos</button></div>`}<div id="brandProg"></div>`}
 async function uploadClip(k,inp){const f=inp.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);
  try{const r=await fetch('/api/branding/clip/'+k,{method:'POST',body:fd});if(!r.ok)throw new Error((await r.json()).detail||r.status);await loadBranding();alert('Saved. New videos use it; click “✨ Apply … to all existing videos” to update old ones.')}catch(e){alert(e.message)}}
-async function clipOff(k){if(!confirm(`Turn the ${k} off for new videos?`))return;await api('/api/branding/clip/'+k,{method:'DELETE'});loadBranding()}
-async function clipDefault(k){await api('/api/branding/clip/'+k+'?restore_default=true',{method:'DELETE'});loadBranding()}
+async function clipOff(k){if(!confirm(`Turn the ${k} off for new videos?`))return;try{await api('/api/branding/clip/'+k,{method:'DELETE'})}catch(e){return alert(e.message)}loadBranding()}
+async function clipDefault(k){try{await api('/api/branding/clip/'+k+'?restore_default=true',{method:'DELETE'})}catch(e){return alert(e.message)}loadBranding()}
 async function uploadLogo(inp){const f=inp.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);
  try{const r=await fetch('/api/branding/logo',{method:'POST',body:fd});if(!r.ok)throw new Error(await r.text());await loadBranding();
   if(confirm('Logo saved — new videos will carry it. Apply it to all existing videos now too? (ffmpeg only, no AI cost; a minute or two per video)'))applyLogoAll(true)}catch(e){alert(e.message)}}
-async function delLogo(){if(!confirm('Remove the logo? New videos will have no watermark. (Use “Apply to all” afterwards to strip it from existing videos.)'))return;await api('/api/branding/logo',{method:'DELETE'});loadBranding()}
+async function delLogo(){if(!confirm('Remove the logo? New videos will have no watermark. (Use “Apply to all” afterwards to strip it from existing videos.)'))return;try{await api('/api/branding/logo',{method:'DELETE'})}catch(e){return alert(e.message)}loadBranding()}
 async function applyLogoAll(skip){if(!skip&&!confirm('Re-render every existing video with the current logo? No AI cost. If a video is already on YouTube/Facebook/Instagram, publish it again to update it there.'))return;
  try{const r=await api('/api/branding/apply-all',{method:'POST'});const t=setInterval(async()=>{const s=await api('/api/branding/apply-all');$('#brandProg').textContent=s.running?`Applying… ${s.done}/${s.total} videos`:`✓ Done — ${s.done} video(s) updated`;if(!s.running){clearInterval(t);loadJobs()}},2000)}catch(e){alert(e.message)}}
-async function disc(path){if(!confirm('Disconnect this account from the app? (Nothing is deleted on the platform.)'))return;await api('/api/social/'+path,{method:'DELETE'});loadAccounts();headerStatus()}
-async function selPage(){SOC.meta=await api('/api/social/meta/page/'+$('#pgSel').value,{method:'POST'});loadAccounts();headerStatus()}
+async function disc(path){if(!confirm('Disconnect this account from the app? (Nothing is deleted on the platform.)'))return;try{await api('/api/social/'+path,{method:'DELETE'})}catch(e){return alert(e.message)}loadAccounts();headerStatus()}
+async function selPage(){try{SOC.meta=await api('/api/social/meta/page/'+$('#pgSel').value,{method:'POST'})}catch(e){return alert(e.message)}loadAccounts();headerStatus()}
 async function headerStatus(){try{SOC=await api('/api/social/status')}catch(e){}const n=Object.keys(SOC.youtube.channels).length;
  $('#ytstatus').innerHTML=`<span class="badge">${n?'▶ ✓':'▶ ✗'}</span> <span class="badge">${SOC.meta.connected?'📘 ✓':'📘 ✗'}</span> <span class="badge">${SOC.meta.instagram?'📸 ✓':'📸 ✗'}</span>`+(cfg.mock?' <span class="badge" style="background:var(--yellow)">MOCK_AI</span>':'')}
 
 let lastJob=null;
 function langCost(){const j=lastJob,sel=$('#addLang');if(!j||!sel||!sel.value)return;const lang=sel.value,sc=(j.script||{}).scenes||[];
  const hasLyrics=sc.length&&sc.every(s=>s['line_'+lang]);const sung=(j.params||{}).vocals==='sung';const mins=((Object.values(j.outputs||{})[0]||{}).duration||120)/60;
- const rate=cfg.usd_to_inr||84;const voice=sung?mins*(cfg.prices_usd.sung_per_minute||0.21)*rate:sc.map(s=>(s['line_'+lang]||s.line_en||'').length).reduce((a,b)=>a+b,0)*1.2/1e6*(cfg.prices_usd.tts_per_1m_chars||16)*rate;
+ const rate=cfg.usd_to_inr||84;const voice=sung?mins*((cfg.prices_usd.sung_per_minute||0.21)+(cfg.prices_usd.stt_per_minute||0))*rate:sc.map(s=>(s['line_'+lang]||s.line_en||'').length).reduce((a,b)=>a+b,0)*1.2/1e6*(cfg.prices_usd.tts_per_1m_chars||16)*rate;
  const text=(hasLyrics?0:0.5)+0.5;
  $('#langCostLbl').innerHTML=`${hasLyrics?'✓ Lyrics already exist':'✍️ Lyrics will be written by Gemini'} · ${sung?'🎤 ElevenLabs song':'🗣 Google voice'} · pictures reused (₹0) · est. <b>${inr(voice+text)}</b>`}
 async function addLang(id){const lang=$('#addLang').value;if(!lang)return;if(!confirm(`Create the ${LNAME(lang)} version of this video?\n\n${$('#langCostLbl').textContent}`))return;
@@ -313,9 +327,9 @@ async function copyTxt(btn,t){const o=btn.dataset.label||btn.textContent;btn.dat
  btn.textContent=ok?'✓ Copied':'Press Ctrl+C';if(!ok)window.prompt('Copy with Ctrl+C, then Enter:',t);setTimeout(()=>btn.textContent=o,1500)}
 async function setLyrics(id,lang,on){if(!confirm(on?`Draw animated lyrics on the ${LNAME(lang)} video? Free — takes about a minute. If it's already on YouTube, upload it again to update.`:`Remove the on-screen lyrics from the ${LNAME(lang)} video? (The clean version is kept, nothing is regenerated.)`))return;
  try{await api(`/api/jobs/${id}/lyrics?lang=${lang}&on=${on}`,{method:'POST'});watch(id)}catch(e){alert(e.message)}}
-async function resume_(id){await api('/api/jobs/'+id+'/resume',{method:'POST'});watch(id)}
+async function resume_(id){try{await api('/api/jobs/'+id+'/resume',{method:'POST'})}catch(e){return alert(e.message)}watch(id)}
 async function del_(id){if(!confirm('Delete this video and its files from the server? (Downloaded/YouTube copies are unaffected)'))return;try{await api('/api/jobs/'+id,{method:'DELETE'})}catch(e){return alert(e.message)}if(current===id||$('#resultCard').innerHTML.includes(id))$('#resultCard').style.display='none';loadJobs()}
-async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${j.title||j.id}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${(j.languages||[]).map(l=>`<span class="badge">${l}</span>`).join(' ')} ${j.cost?inr(j.cost.total_inr_all_attempts||j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''} <button class="small" style="float:right;padding:2px 8px" title="Delete video" onclick="del_('${j.id}')">🗑</button></div>`).join(''):'<i>None yet</i>'}
+async function loadJobs(){const js=await api('/api/jobs');$('#jobs').innerHTML=js.length?js.map(j=>`<div style="padding:6px 0;border-bottom:1px dashed #eee"><a onclick="open_('${j.id}')">${esc(j.title||j.id)}</a> <span class="badge" style="${j.status==='done'?'background:#dff5df':j.status==='error'||j.status==='paused'?'background:#ffe3e3':'background:#fff3c4'}">${j.status}</span> <span class="badge">${(j.params||{}).mode||''}</span> ${(j.languages||[]).map(l=>`<span class="badge">${l}</span>`).join(' ')} ${j.cost?inr(j.cost.total_inr_all_attempts||j.cost.total_inr):''} ${Object.values(j.outputs||{}).some(o=>o.youtube)?'📺':''} <button class="small" style="float:right;padding:2px 8px" title="Delete video" onclick="del_('${j.id}')">🗑</button></div>`).join(''):'<i>None yet</i>'}
 async function open_(id){const j=await api('/api/jobs/'+id);if(j.status==='running'||j.status==='queued'||j.status==='waiting')watch(id);else render(j)}
 
 (async()=>{cfg=await api('/api/config');engineHint();

@@ -87,12 +87,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         parts = []
         for wd, wt in zip(words, weights):
             dur_ms = round(sung * 1000 * wt / total_w)
-            if lang in RTL:  # karaoke fill only; per-word scaling garbles right-to-left shaping
-                parts.append(f"{{\\kf{dur_ms // 10}}}{wd}")
-            else:
-                t0 = offset_ms
-                parts.append(f"{{\\kf{dur_ms // 10}\\t({t0},{t0 + 140},\\fscx116\\fscy116)"
-                             f"\\t({t0 + 140},{t0 + 300},\\fscx100\\fscy100)}}{wd}")
+            # colour fill only: a per-word scale pop re-flows the centred line, so every word slid ~9 px
+            # back and forth three times a second (measured) - the opposite of calm
+            parts.append(f"{{\\kf{dur_ms // 10}}}{wd}")
             offset_ms += dur_ms
         pop = "\\fscx60\\fscy60\\t(0,180,\\fscx108\\fscy108)\\t(180,300,\\fscx100\\fscy100)"
         lead = f"{{\\fad(200,250)\\3c{colour}{pop}\\k25}}"

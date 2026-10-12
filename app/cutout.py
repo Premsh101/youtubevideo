@@ -169,7 +169,8 @@ def ensure_prop(name: str, mode: str, ledger: CostLedger) -> Path:
         ledger.image(f"prop {name}", 1, cached=True)
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    key = chroma.pick_key(name)
+    k = chroma.pick_key(name)
+    key = "magenta" if k == "green" else k        # props: leaves, frogs, limes... are green far more often than magenta
     hexcol, kname = chroma.KEYS[key]
     prompt = (
         f"{toddler.style_prompt(mode)}. Sticker-style prop: a single cute {name}, simple and round, bright colours, "
@@ -227,6 +228,7 @@ def prepare(job_dir: Path, script: dict, chars: list[dict], mode: str, job_id: s
             scene_props.append({"name": p["name"], "file": props[p["name"]], "at": p["at"]})
         specs.append({
             "bg": plates[key], "camera": s.get("camera", "slow zoom in"), "mood": s.get("mood_colour", "sky blue"),
+            "index": int(s.get("index", 0)),
             "chars": [{"id": by_name[c["name"]]["id"], "name": c["name"], "sprite": sprites[by_name[c["name"]]["id"]],
                        "pos": c["position"], "action": c["action"]} for c in s["characters"]],
             "props": scene_props, "seed": i + 1,
@@ -321,7 +323,8 @@ class SceneRenderer:
         self.shadow = self._shadow()
         self.props = []
         xs = [s["x"] for s in self.sprites]
-        slots = sorted([(0.78, 0.36), (0.22, 0.36), (0.5, 0.20)], key=lambda p: -min(abs(p[0] * W - x) for x in xs))
+        side_y = 0.20 if len(xs) >= 2 else 0.36      # with two characters the side slots sit above their heads
+        slots = sorted([(0.78, side_y), (0.22, side_y), (0.5, 0.20)], key=lambda p: -min(abs(p[0] * W - x) for x in xs))
         for i, p in enumerate(scene["props"]):
             img = Image.open(assets / p["file"]).convert("RGBA")
             th = min(0.23 * H, 0.26 * W * img.height / img.width)
@@ -347,14 +350,11 @@ class SceneRenderer:
 
     # ---- camera: every layer is projected through the same zoom/pan, so nothing slides against the background
     def _camera(self, t: float) -> tuple[float, float]:
+        """Even scenes zoom in 1.00 -> 1.06, odd scenes zoom out 1.06 -> 1.00: a scene always ends in the state the
+        next one starts from, so two scenes on the same background dissolve without a double image or a snap-back."""
         p = _smooth(t / max(self.dur, 0.1))
-        cam = self.scene["camera"]
-        if "zoom out" in cam:
+        if int(self.scene.get("index", 0)) % 2:
             return 1.06 - 0.06 * p, 0.0
-        if "pan left" in cam:
-            return 1.06, (0.5 - p) * 0.034 * self.W
-        if "pan right" in cam:
-            return 1.06, (p - 0.5) * 0.034 * self.W
         return 1.0 + 0.06 * p, 0.0
 
     def _motion(self, sp: dict, t: float) -> tuple[float, float, float, float, float, float]:
@@ -458,8 +458,8 @@ def render_scene_clip(scene: dict, assets: Path, W: int, H: int, fps: int, n_fra
     r = SceneRenderer(scene, assets, W, H, fps, n_frames / fps, grid, scene_start, lead, line_dur, env, speaker)
     proc = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(fps),
-         "-i", "-", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
-         "-r", str(fps), str(out)], stdin=subprocess.PIPE)
+         "-i", "-", "-an", "-vf", "scale=out_color_matrix=bt709:out_range=tv", "-c:v", "libx264", "-preset", "veryfast",
+         "-crf", "19", "-pix_fmt", "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-r", str(fps), str(out)], stdin=subprocess.PIPE)
     try:
         for f in range(n_frames):
             proc.stdin.write(r.frame(f / fps).tobytes())

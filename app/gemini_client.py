@@ -41,6 +41,15 @@ def _hash(*parts: str | bytes) -> str:
 
 
 # --------------------------------------------------------------------------- text
+def _safety(types):
+    """Default thresholds sometimes block harmless kids' lines ("telling lies", "mother duck was sad")."""
+    cats = ("HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
+    try:
+        return [types.SafetySetting(category=c, threshold="BLOCK_ONLY_HIGH") for c in cats]
+    except Exception:  # noqa: BLE001 - older SDK: let the defaults apply
+        return None
+
+
 def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = True,
                   media: list[Path] | None = None, validate=None) -> dict:
     """Ask Gemini for strict JSON. Cached by prompt (+ attached video) hash so re-runs are free.
@@ -59,6 +68,8 @@ def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = Tr
         from google.genai import types
         contents: list | str = prompt
         cfg = dict(response_mime_type="application/json", temperature=0.9)
+        if _safety(types):
+            cfg["safety_settings"] = _safety(types)
         if media:
             contents = [types.Part.from_bytes(data=m.read_bytes(), mime_type="video/mp4") for m in media] + [prompt]
             cfg["temperature"] = 0.4
@@ -123,6 +134,7 @@ def generate_image(prompt: str, ledger: CostLedger, detail: str,
             model=config.IMAGE_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
+                safety_settings=_safety(types),
                 response_modalities=["IMAGE"],
                 image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
             ),

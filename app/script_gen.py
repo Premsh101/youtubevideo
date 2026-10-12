@@ -20,7 +20,7 @@ def scene_count(engine: str, target_seconds: int) -> int:
 
 
 def build_prompt(topic: str | None, user_poem: str | None, characters: list[dict],
-                 mode: str, n_scenes: int, engine: str = "images", mood: str | None = None) -> str:
+                 mode: str, n_scenes: int, engine: str = "images", mood: str | None = None, seed: str = "") -> str:
     char_lines = "\n".join(f"- {c['name']} the {c['species']} ({c['personality']}, {' & '.join(c['colours'])}, wears {c['signature_item']})"
                            for c in characters)
     source = (
@@ -32,6 +32,7 @@ def build_prompt(topic: str | None, user_poem: str | None, characters: list[dict
     cutout_block = cutout.SCRIPT_BLOCK.format(keys=", ".join(cutout.LOCATIONS)) if engine == "cutout" else ""
     cutout_fields = cutout.SCRIPT_FIELDS if engine == "cutout" else ""
     mood_block = mood_text(mood)
+    take = f"\n(Video {seed}: write a fresh rhyme, not one you wrote before for this theme.)" if seed else ""
     return f"""You write nursery rhymes for toddlers aged 1-3 for a bilingual (English + Hindi) YouTube channel.
 
 {source}
@@ -42,11 +43,12 @@ Characters that MUST appear (same look in every scene):
 {lead_block(lead)}
 Toddler rules (this is what the most-watched channels do): very simple words, LOTS of repetition,
 4-8 words per line, strong sing-song rhythm, RHYMING COUPLETS (lines 1+2, 3+4, 5+6 ... must end with rhyming words), onomatopoeia and actions (clap, splash, beep, quack),
-a short catchy HOOK line that repeats as a chorus at least 3 times across the video, and a happy
+a short catchy HOOK line that repeats as a chorus (twice; three times only with 12 or more scenes; always on an
+odd-numbered line so its couplet partner rhymes with it the same way each time), and a happy
 calm ending. Mark chorus lines with "is_chorus": true (hook must be word-for-word identical each time). Hindi must be natural spoken Hindi in Devanagari (not a literal translation);
 both versions must match the same scene meaning. No scary, sad or violent content.
 {lyrics.ENGLISH_RULES}
-{lyrics.HINDI_RULES}
+{lyrics.HINDI_RULES.replace(' Give "end_word" in Devanagari.', '')}
 
 Produce exactly {n_scenes} scenes. Each scene = one lyric line (EN + HI) + one picture.
 The pictures must look like ONE continuous story in a {mode.upper()} animated style:
@@ -56,7 +58,7 @@ foreground/background), 25-45 words, NO text in the image.
 "camera" is one of: slow zoom in, slow zoom out, gentle pan left, gentle pan right.
 "mood_colour" is one of: {', '.join(k.replace('_', ' ') for k in toddler.PALETTE)}.
 {cutout_block}
-{mood_block}
+{mood_block}{take}
 Return JSON:
 {{
  "title_en": str, "title_hi": str, "mood": "sleepy | calm | playful | energetic",
@@ -111,7 +113,7 @@ def _fix_mood(data: dict, requested: str | None, topic: str | None) -> None:
 
 
 def generate_clip_script(segments: list[dict], topic: str | None, user_poem: str | None, ledger: CostLedger,
-                         mood: str | None = None) -> dict:
+                         mood: str | None = None, seed: str = "") -> dict:
     """Lyrics for footage that already exists: one rhyming line per segment, matching what that segment shows.
     `segments` carry a "describe" text (from Gemini's watching of the clip). Same result shape as generate_script,
     so the rest of the pipeline (rhyming per language, voice, thumbnails, publishing) is shared."""
@@ -133,7 +135,7 @@ SEGMENTS:
 
 {source}
 
-{mood_text(mood)}
+{mood_text(mood)}{f" (Video {seed}: write a fresh rhyme.)" if seed else ""}
 Rules: RHYMING COUPLETS (lines 1+2, 3+4, 5+6 ... must end with rhyming words), 4-9 very simple words per line, repetition,
 a short catchy HOOK line repeated as a chorus at least twice ("is_chorus": true, word for word identical each time) if
 there are 6 or more segments, a happy calm ending. Never describe anything that is not visible in the segment.
@@ -160,9 +162,10 @@ Return JSON: {{"title_en": str, "title_hi": str, "mood": "sleepy | calm | playfu
 
 
 def generate_script(topic: str | None, user_poem: str | None, characters: list[dict],
-                    mode: str, engine: str, target_seconds: int, ledger: CostLedger, mood: str | None = None) -> dict:
+                    mode: str, engine: str, target_seconds: int, ledger: CostLedger, mood: str | None = None,
+                    seed: str = "") -> dict:
     n = scene_count(engine, target_seconds)
-    prompt = build_prompt(topic, user_poem, characters, mode, n, engine, mood)
+    prompt = build_prompt(topic, user_poem, characters, mode, n, engine, mood, seed)
     data = generate_json(prompt, ledger, "script + scenes",
                          validate=lambda d: bool(d.get("scenes")) and all(x.get("line_en") and x.get("line_hi") for x in d["scenes"]))
     scenes = data.get("scenes") or []

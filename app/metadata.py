@@ -10,7 +10,7 @@ from . import config, languages
 from .costs import CostLedger
 from .gemini_client import generate_json
 
-TAGS_CHAR_LIMIT = 480  # YouTube's limit is 500 characters across all tags
+TAGS_CHAR_LIMIT = 450  # YouTube's limit is 500 characters across all tags; a tag with spaces counts its quotes too
 
 
 def translate_lines(script: dict, lang: str, ledger: CostLedger) -> list[str]:
@@ -57,10 +57,11 @@ What works for the most-viewed kids videos:
   category phrase, then the channel name if it fits, e.g.
   "Johny Johny Yes Papa 🍭 | Nursery Rhymes & Kids Songs | {config.CHANNEL_NAME}". 1 emoji max. No ALL CAPS.
 - DESCRIPTION: first 2 lines (shown before "more") must contain the rhyme name + "nursery rhymes" /
-  "kids songs" equivalents and a warm promise to parents (sing-along, learning, bedtime...).
-  Then a blank line, the full lyrics, then a short "What your toddler learns" bullet list (2-4),
-  then a subscribe call to action for parents naming the channel "{config.CHANNEL_NAME}"
-  (e.g. "Subscribe to {config.CHANNEL_NAME} for a new rhyme every week!"). 900-1500 characters total.
+  "kids songs" equivalents and a warm, TRUE line for parents about what this video is (sing-along, bedtime...).
+  Then a blank line, the full lyrics, then - only if the lyrics really teach something (counting, colours, animals,
+  habits) - a short "What your toddler learns" list (2-4 items); leave it out for a plain lullaby or story.
+  Then a subscribe call to action naming the channel "{config.CHANNEL_NAME}" ("Subscribe to {config.CHANNEL_NAME}
+  for more rhymes!" - promise no schedule). Only claim what the video actually shows. 900-1500 characters total.
 - TAGS: 15-25 relevant search phrases, most specific first (rhyme name variants, spellings, the
   language name + "rhymes", "nursery rhymes", "kids songs", "baby songs", "toddler learning",
   the topic), mixed native script + romanised/English. Each tag under 30 characters.
@@ -74,9 +75,10 @@ Return JSON: {{"title": str, "description": str, "tags": [str], "hashtags": [str
     tags, used = [], 0
     for t in data.get("tags") or []:
         t = str(t).strip().replace(",", " ")[:30]
-        if t and t.lower() not in {x.lower() for x in tags} and used + len(t) + 1 <= TAGS_CHAR_LIMIT:
+        cost = len(t) + (3 if " " in t else 1)      # YouTube wraps multi-word tags in quotes
+        if t and t.lower() not in {x.lower() for x in tags} and used + cost <= TAGS_CHAR_LIMIT:
             tags.append(t)
-            used += len(t) + 1
+            used += cost
     hashtags = []
     for h in (data.get("hashtags") or [])[:5]:
         h = "#" + str(h).lstrip("#").replace(" ", "")
@@ -84,7 +86,7 @@ Return JSON: {{"title": str, "description": str, "tags": [str], "hashtags": [str
             hashtags.append(h)
     return {
         "title": str(data.get("title") or base_title)[:100],
-        "description": str(data.get("description") or "")[:4800],
+        "description": str(data.get("description") or "")[:4700],   # room for hashtags + "#Shorts" (limit 5000)
         "tags": tags,
         "hashtags": hashtags,
     }

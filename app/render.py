@@ -50,12 +50,15 @@ def snap_to_bars(durations: list[float], xfade: float, bpm: int) -> list[float]:
 def image_to_clip(image: Path, duration: float, camera: str, out: Path, zoom: float = 0.16) -> Path:
     frames = int(round(duration * config.FPS))
     vf = (
-        f"scale=6000:-2,"  # upscale first so sub-pixel pans don't jitter
+        f"scale=6000:{round(6000 * config.VIDEO_H / config.VIDEO_W)}:force_original_aspect_ratio=increase,"
+        f"crop=6000:{round(6000 * config.VIDEO_H / config.VIDEO_W)},"  # upscale first so sub-pixel pans don't jitter; keep 16:9
         f"zoompan={_kenburns_expr(camera, frames, zoom)}:d={frames}:s={config.VIDEO_W}x{config.VIDEO_H}:fps={config.FPS},"
+        f"scale=out_color_matrix=bt709:out_range=tv,"
         f"format=yuv420p"
     )
     _run(FF + ["-loop", "1", "-framerate", str(config.FPS), "-i", str(image), "-vf", vf,
-               "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(out)])
+               "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+               "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", str(out)])
     return out
 
 
@@ -86,7 +89,7 @@ def fit_clip(clip: Path, duration: float, out: Path) -> Path:
     fit = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1"
     src = _duration(clip)
     f = duration / src
-    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", str(fps)]
+    enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-r", str(fps)]
     # trim + a tiny pad only absorb rounding (a few frames) — it sits inside the cross-fade to the next
     # scene, so it is never visible as a hold
     # frames are renumbered at a constant rate before trimming, so every scene is EXACTLY round(d×fps) frames
@@ -107,7 +110,7 @@ def fit_clip(clip: Path, duration: float, out: Path) -> Path:
             slowed = out.with_name(out.stem + "_slow.mp4")
             _run(FF + ["-i", str(clip), "-an", "-vf", f"{fit},setpts=(PTS-STARTPTS)*{stretch:.5f},{interp}", *enc, str(slowed)])
             last = out.with_name(out.stem + "_last.png")
-            _run(FF + ["-sseof", "-0.2", "-i", str(slowed), "-frames:v", "1", "-update", "1", str(last)])
+            _run(FF + ["-sseof", "-0.2", "-i", str(slowed), "-update", "1", str(last)])   # last frame wins
             rest = duration - _duration(slowed)
             push = image_to_clip(last, max(rest, 2 / fps), "slow zoom in", out.with_name(out.stem + "_push.mp4"), zoom=0.06)
             _run(FF + ["-i", str(slowed), "-i", str(push), "-filter_complex",
@@ -178,7 +181,7 @@ def crossfade_concat(clips: list[Path], durations: list[float], xfade: float, ou
         parts.append(f"[xx]fade=t=in:d=1,fade=t=out:st={total - 1.5:.3f}:d=1.5[v]")
         fc = ";".join(parts)
     _run(FF + inputs + ["-filter_complex", fc, "-map", "[v]", "-c:v", "libx264", "-preset", "medium",
-                        "-crf", "19", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)])
+                        "-crf", "19", "-pix_fmt", "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-movflags", "+faststart", str(out)])
     return starts
 
 

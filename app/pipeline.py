@@ -47,6 +47,11 @@ class Job:
     def _lock(self):
         return self._locks.setdefault(self.id, threading.Lock())
 
+    def fresh_ledger(self) -> None:
+        """A new operation on this video starts its own cost table; what was spent before stays in the total."""
+        self.state["spent_before_inr"] = round(self.state.get("spent_before_inr", 0.0) + self.ledger.summary()["total_inr"], 2)
+        self.ledger = CostLedger()
+
     def busy(self) -> bool:
         return getattr(self, "_busy", 0) > 0
 

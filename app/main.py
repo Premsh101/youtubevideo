@@ -209,6 +209,7 @@ def _load_idle_job(job_id: str) -> pipeline.Job:
         fresh = pipeline.load_job(job_id)        # idle: nothing is writing it, so the file is the truth
         if fresh:
             live.state = fresh
+        live.fresh_ledger()
         return live
     try:
         job = pipeline.Job.load(job_id)

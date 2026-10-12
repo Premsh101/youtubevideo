@@ -679,7 +679,6 @@ def test_change_vocals_of_finished_video_keeps_pictures_and_publish_history():
     jid = job["id"]
     kf = list(j["keyframes"])
     assert j["cost"]["by_kind"].get("image")   # the first run drew the pictures
-    img_usd = j["cost"]["by_kind"]["image"]["usd"]
     # pretend it was published, and chose thumbnail B: a new voice must not forget either
     jf = config.OUTPUT_DIR / jid / "job.json"
     d = __import__("json").loads(jf.read_text())
@@ -698,7 +697,7 @@ def test_change_vocals_of_finished_video_keeps_pictures_and_publish_history():
     assert (config.OUTPUT_DIR / jid / o["video_clean"]).exists()
     assert o["vocals"] == {"mode": "tts", "voice": "male", "take": 0, "mood": "playful"}
     assert o["published"]["youtube"]["url"] == "https://youtu.be/x" and o["thumbnail_choice"] == "B"
-    assert j2["keyframes"] == kf and j2["cost"]["by_kind"]["image"]["usd"] == img_usd   # no new pictures paid
+    assert j2["keyframes"] == kf and not j2["cost"]["by_kind"].get("image")   # no pictures touched: re-voice only
     assert (config.OUTPUT_DIR / jid / o["video"]).exists()
 
     # same voice, new mood: a different audio (the energetic tempo), nothing else changes

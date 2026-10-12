@@ -23,8 +23,18 @@ services:
       - META_PAGE_ID=${META_PAGE_ID}
       - IMAGE_RPM=${IMAGE_RPM:-5}
       - MOCK_AI=${MOCK_AI:-0}
+      - RENDER_WORKERS=${RENDER_WORKERS:-2}
+      - MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-1}
+      - CACHE_MAX_GB=${CACHE_MAX_GB:-25}
     volumes:
-      - studio_data:/srv/data      # characters, cache, finished videos, YouTube token
+      - studio_data:/srv/data      # characters, cache, finished videos, YouTube token  (BACK THIS UP: tokens live here)
+    stop_grace_period: 60s         # let a running ffmpeg finish its file before a redeploy kills it
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/api/languages"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 volumes:
   studio_data:

@@ -170,13 +170,13 @@ def post_instagram_reel(video_url: str, caption: str, cover_url: str | None = No
             params["cover_url"] = cover_url
         container = retry.guarded("social", lambda: _check(http.post(_graph(f"{ig['id']}/media"), data=params)))["id"]
         # Instagram downloads and processes the video; poll until it is ready (usually 30 s - 3 min)
-        for _ in range(60):
+        for _ in range(20):
             st = _check(http.get(_graph(container), params={"fields": "status_code,status", "access_token": token}))
             if st.get("status_code") == "FINISHED":
                 break
             if st.get("status_code") in ("ERROR", "EXPIRED"):
                 raise RuntimeError(f"Instagram could not process the video: {st.get('status')}")
-            time.sleep(10)
+            time.sleep(30)        # Meta: query the container about once a minute
         else:
             raise RuntimeError("Instagram is still processing after 10 minutes; try again later")
         media_id = retry.guarded("social", lambda: _check(http.post(

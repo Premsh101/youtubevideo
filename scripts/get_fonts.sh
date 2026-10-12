@@ -12,3 +12,5 @@ for f in baloo2/Baloo2 balooda2/BalooDa2 baloobhai2/BalooBhai2 baloochettan2/Bal
   [ -s "$DEST/$name.ttf" ] || curl -fsSL "$BASE/${f}%5Bwght%5D.ttf" -o "$DEST/$name.ttf"
 done
 echo "fonts in $DEST:"; ls "$DEST"
+n=$(ls "$DEST"/*.ttf 2>/dev/null | wc -l)
+if [ "$n" -lt 10 ]; then echo "ERROR: only $n font files downloaded (expected 10) - Hindi/Tamil lyrics would render as boxes" >&2; exit 1; fi

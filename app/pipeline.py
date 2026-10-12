@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -18,6 +19,8 @@ from .gemini_client import generate_image, generate_video_clip
 from .music import get_music
 
 TAIL = 0.9          # breathing room after each line
+_JOB_SLOTS = threading.BoundedSemaphore(max(1, config.MAX_PARALLEL_JOBS))
+log = logging.getLogger("studio")
 MIN_SCENE_SEC = 5.0
 
 
@@ -97,6 +100,22 @@ class Job:
         prev_status, prev_step, prev_progress = self.state.get("status"), self.state.get("step"), self.state.get("progress", 0.0)
         target = target or self._run
         retry.set_status_callback(lambda msg: self.step(msg, self.state["progress"]))
+        if not _JOB_SLOTS.acquire(blocking=False):      # one video renders at a time on a small box; the rest queue
+            self.state["status"] = "queued"
+            self.step("Waiting for the other video to finish…", self.state.get("progress", 0.0))
+            _JOB_SLOTS.acquire()
+        try:
+            free_gb = shutil.disk_usage(config.DATA_DIR).free / 1024 ** 3
+            if free_gb < config.MIN_FREE_GB:
+                self.state["status"], self.state["error"] = "error", (f"Only {free_gb:.1f} GB free on the server disk; delete old "
+                                                                      f"videos or clips (or lower CACHE_MAX_GB) and press Resume")
+                self.save()
+                return
+            self._run_loop(target, free, prev_status, prev_step, prev_progress)
+        finally:
+            _JOB_SLOTS.release()
+
+    def _run_loop(self, target, free, prev_status, prev_step, prev_progress) -> None:
         pause_idx = 0
         while True:
             self.state["attempts"] = self.state.get("attempts", 0) + 1
@@ -128,6 +147,7 @@ class Job:
                           f"(nothing already generated is lost)", self.state["progress"])
                 time.sleep(wait)
             except Exception as exc:  # surfaced to the UI
+                log.exception("job %s failed", self.id)
                 if free and self.state.get("outputs"):
                     # a failed add-language / re-voice / fix-up must not hide the finished video or invite a full re-run
                     self.state["status"], self.state["step"], self.state["progress"] = prev_status, prev_step, prev_progress
@@ -156,7 +176,14 @@ class Job:
         #    Sheets are generated once per character and reused forever.
         if self.state.get("cast"):  # resuming: never re-roll the cast (would change script + images)
             self.step("Resuming with the same characters", 0.03)
-            chars = [characters.get(c["id"]) for c in self.state["cast"]]
+            chars = []
+            for c in self.state["cast"]:
+                try:
+                    chars.append(characters.get(c["id"]))
+                except KeyError:
+                    self.step(f"Character {c['name']} was deleted from the library; continuing with the saved pictures", 0.03)
+            if not chars and self.state.get("cast"):
+                raise RuntimeError("All characters of this video were deleted from the library; create the video again.")
             for c in chars:
                 characters.ensure_sheet(c["id"], mode, self.ledger)
         elif p.get("character_mode") == "describe" and p.get("character_description"):
@@ -223,6 +250,9 @@ class Job:
 
         # 5. each language: audio first, then the pictures are cut to where that audio's lines really are
         for li, lang in enumerate(langs):
+            done = (self.state.get("outputs") or {}).get(lang) or {}
+            if done.get("video") and (self.dir / done["video"]).exists():   # resume: this language is already finished
+                continue
             self._produce_language(lang, 0.6 + 0.38 * li / len(langs))
 
     # ------------------------------------------------------------ languages
@@ -231,7 +261,7 @@ class Job:
         then checked; done once per language (script["rhyme"][lang] records the result)."""
         script = self.state["script"]
         report = (script.get("rhyme") or {}).get(lang)
-        if report and not report.get("retry"):
+        if report and (not report.get("retry") or lang in (self.state.get("outputs") or {})):
             return
         if not report and lang in (self.state.get("outputs") or {}) and all(s.get(f"line_{lang}") for s in script["scenes"]):
             # a video made before the rhyme step existed: its words are already published/on screen - keep them
@@ -286,7 +316,7 @@ class Job:
         if measured and align._valid(measured, total, len(lines)):   # word times from listening back to the song
             line_t, method = list(measured), "stt"
         else:
-            line_t, method = align.line_starts(song, lines, total, planned_starts, self.ledger)
+            line_t, method = align.line_starts(song, lines, total, planned_starts, self.ledger, lang)
         # scene i begins `lead` before its line is sung; scene 0 always starts at 0 (the song's intro is scene 0)
         def _bounds(ts: list[float]) -> list[float]:
             b = [0.0]
@@ -321,7 +351,7 @@ class Job:
             s["file"] = f"segments/seg_{i:02}.mp4"
             s["describe"] = clips.describe_segment(s, by_id[s["clip"]])
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=max(1, min(len(segs), os.cpu_count() or 2))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, min(len(segs), config.RENDER_WORKERS))) as pool:
             list(pool.map(lambda i: clips.cut_segment(segs[i]["clip"], segs[i]["start"], segs[i]["end"],
                                                       self.dir / segs[i]["file"], config.VIDEO_W, config.VIDEO_H, config.FPS),
                           range(len(segs))))
@@ -369,6 +399,9 @@ class Job:
         self.state["keyframes"] = keyframes
         self.save()
         for li, lang in enumerate(langs):
+            done = (self.state.get("outputs") or {}).get(lang) or {}
+            if done.get("video") and (self.dir / done["video"]).exists():   # resume: this language is already finished
+                continue
             self._produce_language(lang, 0.35 + 0.6 * li / len(langs))
 
     def _render_clips(self, lang: str, durations: list[float]) -> Path:
@@ -376,7 +409,7 @@ class Job:
         segs = self.state["clips_plan"]["segments"]
         outs = [self.dir / f"clip_{lang}_{i:02}.mp4" for i in range(len(segs))]
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=max(1, min(len(segs), os.cpu_count() or 2))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, min(len(segs), config.RENDER_WORKERS))) as pool:
             list(pool.map(lambda i: render.fit_clip(self.dir / segs[i]["file"], durations[i], outs[i]), range(len(segs))))
         silent = self.dir / f"video_silent_{lang}.mp4"
         render.crossfade_concat(outs, durations, self._xfade(), silent)
@@ -421,7 +454,7 @@ class Job:
             cutout.render_scene_clip(self.state["cutout"]["scenes"][i], self.dir / "assets", W, H, fps,
                                      round(durations[i] * fps), grid, tl["starts"][i], lead, lines[i], files[i], i, clips[i])
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=max(1, min(len(scenes), os.cpu_count() or 2))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, min(len(scenes), config.RENDER_WORKERS))) as pool:
             list(pool.map(one, range(len(scenes))))
         silent = self.dir / f"video_silent_{lang}.mp4"
         render.crossfade_concat(clips, durations, self._xfade(), silent)
@@ -446,7 +479,7 @@ class Job:
                                      scenes[i].get("camera", "slow zoom in"), clips[i])
         # scenes are independent ffmpeg jobs: use all CPU cores (motion interpolation is heavy)
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=max(1, min(len(scenes), os.cpu_count() or 2))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, min(len(scenes), config.RENDER_WORKERS))) as pool:
             list(pool.map(one, range(len(scenes))))
         silent = self.dir / f"video_silent_{lang}.mp4"
         render.crossfade_concat(clips, durations, self._xfade(), silent)
@@ -786,12 +819,26 @@ def load_job(job_id: str) -> dict | None:
     return json.loads(f.read_text()) if f.exists() else None
 
 
+_SUMMARY_CACHE: dict[str, tuple[float, dict]] = {}
+
+
 def list_jobs() -> list[dict]:
+    """Short rows for the list; each job.json is parsed again only when it changed (the UI polls this)."""
     jobs = []
     for d in sorted(config.OUTPUT_DIR.iterdir(), reverse=True):
+        f = d / "job.json"
+        if not f.exists():
+            continue
+        mtime = f.stat().st_mtime
+        hit = _SUMMARY_CACHE.get(d.name)
+        if hit and hit[0] == mtime:
+            jobs.append(hit[1])
+            continue
         j = load_job(d.name)
         if j:
-            jobs.append({k: j.get(k) for k in ("id", "status", "step", "progress", "created", "cost", "outputs")}
-                        | {"title": (j.get("script") or {}).get("title_en"), "params": j.get("params"),
-                           "languages": list((j.get("outputs") or {}).keys())})
+            row = ({k: j.get(k) for k in ("id", "status", "step", "progress", "created", "cost", "outputs")}
+                   | {"title": (j.get("script") or {}).get("title_en"), "params": j.get("params"),
+                      "languages": list((j.get("outputs") or {}).keys())})
+            _SUMMARY_CACHE[d.name] = (mtime, row)
+            jobs.append(row)
     return jobs

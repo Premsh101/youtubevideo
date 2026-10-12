@@ -19,6 +19,9 @@ CACHE_DIR = DATA_DIR / "cache"
 OUTPUT_DIR = DATA_DIR / "output"
 SECRETS_DIR = DATA_DIR / "secrets"
 MUSIC_DIR = DATA_DIR / "music"
+RENDER_WORKERS = int(os.getenv("RENDER_WORKERS", "2"))          # parallel ffmpeg/Pillow renders per video (4 vCPU box: 2)
+MAX_PARALLEL_JOBS = int(os.getenv("MAX_PARALLEL_JOBS", "1"))    # videos rendered at the same time; others wait in line
+MIN_FREE_GB = float(os.getenv("MIN_FREE_GB", "2"))
 for _d in (CHARACTER_DIR, CACHE_DIR, OUTPUT_DIR, SECRETS_DIR, MUSIC_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 

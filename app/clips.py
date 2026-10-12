@@ -151,7 +151,8 @@ def plan_segments(clip_ids: list[str]) -> list[dict]:
         n = max(1, round(m["duration"] / SECONDS_PER_LINE))
         step = m["duration"] / n
         for k in range(n):
-            segs.append({"clip": cid, "name": m["name"], "start": round(k * step, 3), "end": round((k + 1) * step, 3)})
+            segs.append({"clip": cid, "name": m["name"], "start": round(k * step, 3), "end": round((k + 1) * step, 3),
+                         "aspect": round(m["width"] / max(1, m["height"]), 3)})
     if len(segs) % 2 == 1 or len(segs) < 2:
         i = max(range(len(segs)), key=lambda j: segs[j]["end"] - segs[j]["start"])
         s = segs[i]

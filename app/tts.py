@@ -63,12 +63,22 @@ def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = Fal
         return out
 
     from google.cloud import texttospeech as t
+    md = moods.get(mood)
+    plain = bool(voice) and any(k in voice for k in ("Chirp", "Studio"))   # these voices reject SSML <prosody>
+    if plain:
+        synth_input = t.SynthesisInput(text=text)
+        audio_cfg = t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000,
+                                  speaking_rate=md["rate"] + (md["chorus_rate"] if chorus else 0.0),
+                                  pitch=md["pitch"] + (md["chorus_pitch"] if chorus else 0.0))
+    else:
+        synth_input = t.SynthesisInput(ssml=_ssml(text, chorus, mood))
+        audio_cfg = t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000)
     resp = retry.guarded("tts", lambda: _client().synthesize_speech(
-        input=t.SynthesisInput(ssml=_ssml(text, chorus, mood)),
+        input=synth_input,
         voice=(t.VoiceSelectionParams(language_code=languages.tts_locale(lang), name=voice) if voice else
                t.VoiceSelectionParams(language_code=languages.tts_locale(lang),
                                       ssml_gender=t.SsmlVoiceGender.MALE if male else t.SsmlVoiceGender.FEMALE)),
-        audio_config=t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000),
+        audio_config=audio_cfg,
     ))
     out.write_bytes(resp.audio_content)
     ledger.tts(f"{lang} line", len(text))

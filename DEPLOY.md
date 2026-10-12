@@ -95,6 +95,18 @@ The page is one screen: left column = settings 1-2-3, right column = progress / 
 - `Let Gemini write it` → type a topic ("brushing teeth") or leave blank.
 - `I have a poem` → paste your own lyrics (English or Hindi); Gemini makes the other language.
 
+**Operations (read once)**
+- Set `APP_PASSWORD` in Coolify. Without it anyone who finds the address can spend your credits and post to your
+  channels (the app shows a red warning bar until it is set).
+- Back up the `studio_data` volume now and then: it holds the YouTube/Meta tokens, the signing key, your characters,
+  clips and every finished video. `docker run --rm -v studio_data:/d -v $PWD:/out alpine tar czf /out/studio-backup.tgz /d`
+- A redeploy mid-render marks that video "interrupted — press Resume"; nothing already generated is lost.
+- One video renders at a time (`MAX_PARALLEL_JOBS`), two scenes in parallel (`RENDER_WORKERS`) — right for a 4-vCPU box.
+  Renders refuse to start under `MIN_FREE_GB` (2 GB) of free disk. The asset cache is capped at `CACHE_MAX_GB` (25).
+- Large clip uploads (up to 300 MB) need Coolify's proxy read timeout raised above 60 s (Coolify → Proxy → settings,
+  `respondingTimeouts.readTimeout`) or the upload dies silently on slow uplinks.
+- ffmpeg errors now appear in the video's error text; container logs (`docker logs`) carry the full trace.
+
 **2 · Look & feel**
 - *Animation mode*: `🧊 3D rendered` (what Cocomelon / Little Treehouse look like — default) or `🎨 2D cartoon`.
 - *Motion engine* (the three can be mixed freely from video to video):

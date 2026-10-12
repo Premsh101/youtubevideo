@@ -260,6 +260,8 @@ def test_publish_everywhere_vertical_cuts_and_signed_links(monkeypatch):
 
     d = config.OUTPUT_DIR / j["id"]
     reel = min(d.glob("*_vertical_*s.mp4"), key=lambda f: int(f.stem.rsplit("_", 1)[1][:-1]))  # Reel = shortest cut
+    vass = next(d.glob("lyrics_*_vertical.ass"), None)                      # lyrics re-drawn at phone size, not scaled down
+    assert vass is not None and "PlayResY: 1280" in vass.read_text()
     dims = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
                            "-of", "csv=p=0", str(reel)], capture_output=True, text=True).stdout.strip()
     assert dims == "720,1280"
@@ -438,6 +440,9 @@ def test_rhyme_checker_and_native_lyrics_with_repair():
     j2 = _wait(r.json()["id"])
     assert j2["status"] == "done", j2.get("error")
     assert j2["script"]["rhyme"]["hi"].get("skipped") and j2["script"]["rhyme"]["en"]["ok"]
+    from app import presets
+    poem = presets.get("machli")["poem"]
+    assert all(sc["line_hi"] in poem for sc in j2["script"]["scenes"])          # really the owner's words, not "smoothed"
 
 
 def test_cutout_engine_beats_reuse_and_add_language():
@@ -908,3 +913,35 @@ def test_poem_in_another_language_is_kept_and_english_written_to_rhyme():
     assert s["rhyme"]["de"].get("skipped") and s["rhyme"]["en"]["ok"]
     assert all(sc["line_de"] in poem for sc in s["scenes"])                       # the owner's own German words
     assert j["outputs"]["de"]["video"] and j["outputs"]["en"]["video"]
+
+
+def test_round3_units(tmp_path):
+    from app import characters, lyrics, main, pipeline, youtube
+    # YouTube limits in the right units: bytes for the description, quoted tags for the tag budget
+    hindi = "मछली जल की रानी है " * 400
+    assert len(youtube._utf8_cap(hindi, 5000).encode()) <= 5000
+    tags = youtube._tag_cap(["nursery rhymes for kids"] * 40)
+    assert sum(len(t) + 3 for t in tags) <= 500
+    assert youtube._clean("<b>Hi</b>") == "bHi/b"
+    # "kept as written" is checked against the poem
+    poem = "मछली जल की रानी है\nजीवन उसका पानी है"
+    assert lyrics._from_poem(poem, ["मछली जल की रानी है", "जीवन उसका पानी है"])
+    assert not lyrics._from_poem(poem, ["टिमटिम करता नन्हा तारा", "कितना सुंदर कितना प्यारा"])
+    # a second character with the same name gets its own id
+    a = characters.save({"name": "Bunny Test", "species": "rabbit", "personality": "x", "colours": ["white"], "signature_item": "bow"})
+    b = characters.save({"name": "Bunny Test", "species": "rabbit", "personality": "y", "colours": ["grey"], "signature_item": "hat"})
+    assert a["id"] != b["id"] and characters.get(b["id"])["personality"] == "y"
+    characters.delete(a["id"]); characters.delete(b["id"])
+    # a job left "running" on disk by a restart is marked interrupted at startup
+    jid = "j-restart-test"
+    d = config.OUTPUT_DIR / jid; d.mkdir(parents=True, exist_ok=True)
+    (d / "job.json").write_text(__import__("json").dumps({"id": jid, "status": "running", "step": "x", "progress": 0.3, "params": {},
+                                                           "script": None, "outputs": {}, "cost": None, "error": None, "created": 0}))
+    assert main._reconcile_interrupted() >= 1
+    assert pipeline.load_job(jid)["status"] == "error" and "Resume" in pipeline.load_job(jid)["error"]
+    pipeline.delete_job(jid)
+    # ffmpeg failures are readable
+    import pytest
+    from app import render
+    with pytest.raises(RuntimeError, match="ffmpeg failed"):
+        render.run_ff(["ffmpeg", "-y", "-i", "/nonexistent.mp4", str(tmp_path / "x.mp4")])

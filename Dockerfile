@@ -9,4 +9,5 @@ COPY app ./app
 ENV DATA_DIR=/srv/data PORT=8000 FONTS_DIR=/srv/fonts
 VOLUME ["/srv/data"]
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 CMD curl -fs http://localhost:8000/api/languages || exit 1
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

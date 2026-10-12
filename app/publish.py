@@ -62,6 +62,15 @@ def _set(job, lang: str, target: str, **kw) -> None:
 
 
 def run(job, lang: str, targets: list[str], privacy: str | None, publish_at: str | None) -> None:
+    """Upload in the background; the job counts as busy meanwhile (no re-voice / add-language on it)."""
+    job.set_busy(True)
+    try:
+        _run_targets(job, lang, targets, privacy, publish_at)
+    finally:
+        job.set_busy(False)
+
+
+def _run_targets(job, lang: str, targets: list[str], privacy: str | None, publish_at: str | None) -> None:
     o = job.state["outputs"][lang]
     order = [t for t in TARGETS if t in targets]
     for t in order:

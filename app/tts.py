@@ -50,7 +50,7 @@ def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = Fal
                     mood: str = "playful") -> Path:
     male = gender == "male"
     voice = None if male else languages.tts_voice(lang)
-    key = hashlib.sha256(f"{lang}|{voice}|{gender if male else ''}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}{"" if mood == "playful" else "|" + mood}".encode()).hexdigest()[:24]
+    key = hashlib.sha256(f"{lang}|{voice}|{'male-v2' if male else ''}|{json.dumps(toddler.VOICE, sort_keys=True)}|{int(chorus)}|{text}{"" if mood == "playful" else "|" + mood}".encode()).hexdigest()[:24]
     out = config.CACHE_DIR / "tts" / f"{key}.wav"
     if out.exists():
         ledger.tts(f"{lang} line", len(text), cached=True)
@@ -66,7 +66,8 @@ def synthesize_line(text: str, lang: str, ledger: CostLedger, chorus: bool = Fal
     resp = retry.guarded("tts", lambda: _client().synthesize_speech(
         input=t.SynthesisInput(ssml=_ssml(text, chorus, mood)),
         voice=(t.VoiceSelectionParams(language_code=languages.tts_locale(lang), name=voice) if voice else
-               t.VoiceSelectionParams(language_code=languages.tts_locale(lang), ssml_gender=t.SsmlVoiceGender.FEMALE)),
+               t.VoiceSelectionParams(language_code=languages.tts_locale(lang),
+                                      ssml_gender=t.SsmlVoiceGender.MALE if male else t.SsmlVoiceGender.FEMALE)),
         audio_config=t.AudioConfig(audio_encoding=t.AudioEncoding.LINEAR16, sample_rate_hertz=24000),
     ))
     out.write_bytes(resp.audio_content)

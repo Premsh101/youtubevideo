@@ -29,7 +29,7 @@ word-for-word identical each time it appears, keep sounds like "splash", "quack"
 {src}
 
 Return JSON: {{"translated_lines": [exactly {len(scenes)} strings], "title": "short rhyme title in {languages.name(lang)}"}}"""
-    data = generate_json(prompt, ledger, f"lyrics {lang}")
+    data = generate_json(prompt, ledger, f"lyrics {lang}", validate=lambda d: len(d.get("translated_lines") or []) == len(scenes))
     lines = data.get("translated_lines") or []
     if len(lines) != len(scenes):
         raise RuntimeError(f"Gemini returned {len(lines)} {lang} lines for {len(scenes)} scenes; press Retry")

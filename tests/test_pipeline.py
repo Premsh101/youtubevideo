@@ -146,6 +146,9 @@ def test_sung_vocals_job():
     tl = j["timelines"]["hi"]
     truth = [float(x) for x in __import__("json").loads(next((config.CACHE_DIR / "songs").glob("*.truth.json")).read_text())]
     assert tl["sync"] in ("stt", "mock-measured")
+    assert abs(tl["line_starts"][0] - truth[0]) < 0.02                 # captions start when line 1 is really sung
+    srt = (config.OUTPUT_DIR / job["id"] / j["outputs"]["hi"]["captions"]).read_text().splitlines()
+    assert srt[1].startswith("00:00:00,400"), srt[1]
     assert j["outputs"]["hi"]["lyrics_match"]["ok"] is True and j["outputs"]["hi"]["lyrics_match"]["match"] == 1.0
     for i in range(1, len(truth)):
         assert abs((truth[i] - tl["starts"][i]) - tl["voice_lead"]) < 1 / 24 + 1e-6, (i, truth[i], tl["starts"][i])  # within one frame
@@ -676,6 +679,7 @@ def test_change_vocals_of_finished_video_keeps_pictures_and_publish_history():
     jid = job["id"]
     kf = list(j["keyframes"])
     assert j["cost"]["by_kind"].get("image")   # the first run drew the pictures
+    img_usd = j["cost"]["by_kind"]["image"]["usd"]
     # pretend it was published, and chose thumbnail B: a new voice must not forget either
     jf = config.OUTPUT_DIR / jid / "job.json"
     d = __import__("json").loads(jf.read_text())
@@ -685,13 +689,16 @@ def test_change_vocals_of_finished_video_keeps_pictures_and_publish_history():
 
     assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "tts", "voice": "female"}).status_code == 409  # unchanged
     assert client.post(f"/api/jobs/{jid}/vocals/de", json={"mode": "tts", "voice": "male"}).status_code == 404
+    old_clean = j["outputs"]["en"]["video_clean"]
     assert client.post(f"/api/jobs/{jid}/vocals/en", json={"mode": "tts", "voice": "male"}).json()["ok"]
     j2 = _wait(jid)
     assert j2["status"] == "done", j2.get("error")
     o = j2["outputs"]["en"]
+    assert o["video_clean"] != old_clean and not (config.OUTPUT_DIR / jid / old_clean).exists()   # new files, old removed
+    assert (config.OUTPUT_DIR / jid / o["video_clean"]).exists()
     assert o["vocals"] == {"mode": "tts", "voice": "male", "take": 0, "mood": "playful"}
     assert o["published"]["youtube"]["url"] == "https://youtu.be/x" and o["thumbnail_choice"] == "B"
-    assert j2["keyframes"] == kf and not j2["cost"]["by_kind"].get("image")   # no new pictures paid
+    assert j2["keyframes"] == kf and j2["cost"]["by_kind"]["image"]["usd"] == img_usd   # no new pictures paid
     assert (config.OUTPUT_DIR / jid / o["video"]).exists()
 
     # same voice, new mood: a different audio (the energetic tempo), nothing else changes
@@ -751,7 +758,9 @@ def test_hindi_rhymes_are_checked_by_code_and_hindi_themes_lead():
             ("मेरा घर", "तुझे डर"), ("एक दिन", "गिनो तीन"), ("सूरज ढल जाता है", "अँधेरा छा जाता है"),
             ("हाथी राजा कहाँ चले", "सूँड हिलाते कहाँ चले"), ("चंदा मामा दूर के", "पुए पकाएँ बूर के")]
     good += [("तितली उड़ी, बस पे चढ़ी", "सीट न मिली तो रोने लगी"), ("आजा मेरे पास", "हट बदमाश"), ("कहाँ गए थे", "सो रहे थे")]
-    bad = [("वो चलता है", "वो गाती है"), ("एक कली", "एक रानी"), ("घर चलो", "खाना खाओ"), ("मेरा घर", "मेरी माँ")]
+    good += [("मछली रानी है", "जीवन पानी हैं")]
+    bad = [("वो चलता है", "वो गाती है"), ("एक कली", "एक रानी"), ("घर चलो", "खाना खाओ"), ("मेरा घर", "मेरी माँ"),
+           ("चलो सोना", "मत रोता"), ("ठंडा पानी", "बड़ा हाथी"), ("मेरी रानी", "लाल गाड़ी")]
     for a, b in good:
         assert lyrics.rhymes_devanagari(a, b) is True, (a, b)
     for a, b in bad:
@@ -760,6 +769,10 @@ def test_hindi_rhymes_are_checked_by_code_and_hindi_themes_lead():
     # romanised Hindi is recognised as Hindi; plain English is not
     assert lyrics.detect_language("lakdi ki kathi kathi pe ghoda") == "hi"
     assert lyrics.detect_language("brushing teeth with a happy duck") == "en"
+    assert lyrics.detect_language("the wheels on the bus go round") == "en"      # "the" is not Hindi थे
+    assert lyrics.detect_language("do the hokey pokey with me") == "en"
+    assert lyrics.detect_language("Alle meine Entchen schwimmen auf dem See") == "de"
+    assert lyrics.detect_language("Frère Jacques, dormez-vous? Sonnez les matines") == "fr"
     assert lyrics.source_language({"topic": "machli jal ki rani"}) == ("hi", False)
     # the prompts: a named rhyme is recognised, Hindi leads, and Hindi gets its own rhyme rules
     p = script_gen.build_prompt("lakdi ki kathi kathi pe ghoda", None, [], "2d", 8)
@@ -818,11 +831,71 @@ def test_english_rhymes_are_checked_by_code_too():
             ("come and play", "a sunny day"), ("the sun", "lots of fun"), ("look and see", "a tall tree"),
             ("the big moon", "very soon"), ("go to sleep", "the water is deep"), ("sit down", "in the town"),
             ("my red car", "where you are"), ("the sky is blue", "I love you"), ("let us go", "the wind will blow")]
+    good += [("quack quack", "come back"), ("open the door", "give me more"), ("come here", "very near"), ("in the air", "on the chair"),
+             ("count to six", "pick up sticks"), ("it is gone", "shines upon"), ("let us go", "the wind will blow")]
     bad = [("the star", "the moon"), ("little light", "a sunny day"), ("my home", "all alone"), ("the cat", "the dog"),
-           ("I love", "we move")]
+           ("I love", "we move"), ("a little bunny", "very happy"), ("take care", "a star")]
     for a, b in good:
         assert lyrics.rhymes_english(a, b) is True, (a, b, lyrics.english_key(a.split()[-1]), lyrics.english_key(b.split()[-1]))
     for a, b in bad:
         assert lyrics.rhymes_english(a, b) is False, (a, b)
     assert lyrics.rhymes_english("नमस्ते", "hello") is None
     assert "PERFECT rhymes" in lyrics._write_prompt([{"line_en": "x", "visual": ""}] * 2, "en", "line_hi", None, False)
+
+
+def test_audit_fixes_units(monkeypatch):
+    from app import elevenlabs, gemini_client, lyrics_overlay, pipeline, retry, tts
+    from app.costs import CostLedger
+    # song sections do not include the cross-fade overlap; planned starts are their cumulative sums
+    planned = [8.0, 8.0, 8.0, 10.0]
+    assert elevenlabs.chunk_seconds(planned, 0.8) == [7.2, 7.2, 7.2, 10.0]
+    plan = elevenlabs.build_plan([{"line_en": "x"}] * 4, planned, "en", "2d", xfade=0.8)
+    assert [c["duration_ms"] for c in plan["chunks"]] == [7200, 7200, 7200, 10000]
+    # on-screen lines never overlap (libass would stack them)
+    out = config.CACHE_DIR / "ass_test.ass"
+    lyrics_overlay.build_ass([(1.0, 4.0, "one two"), (4.0, 7.0, "three four"), (7.0, 9.0, "five")], "en", out)
+    ev = [l for l in out.read_text().splitlines() if l.startswith("Dialogue:")]
+    def t(x):
+        h, m, s = x.split(":"); return int(h) * 3600 + int(m) * 60 + float(s)
+    for a, b in zip(ev, ev[1:]):
+        assert t(a.split(",")[2]) <= t(b.split(",")[1]), (a, b)
+    # male voice is a different cached file from female (and really asks for a male voice)
+    led = CostLedger()
+    f = tts.synthesize_line("hop hop", "en", led, gender="female")
+    m = tts.synthesize_line("hop hop", "en", led, gender="male")
+    assert f != m
+    # a wrong Gemini answer is not cached, so a retry can differ
+    before = len(list((config.CACHE_DIR / "text").glob("*.json")))
+    import pytest
+    with pytest.raises(RuntimeError):
+        gemini_client.generate_json("JUDGE. nothing", led, "x", validate=lambda d: False)
+    assert len(list((config.CACHE_DIR / "text").glob("*.json"))) == before
+    # quota detection: by code, not by digits in free text
+    e = RuntimeError("ElevenLabs: 4290 credits remaining"); assert not retry._is_quota_error(e)
+    e2 = RuntimeError("x"); e2.status_code = 429; assert retry._is_quota_error(e2)
+    # a free fix-up on a paused video leaves it paused (the Resume button must stay)
+    body = {"mode": "2d", "engine": "images", "languages": ["en"], "vocals": "tts", "preset": "machli", "target_seconds": 30}
+    jid = client.post("/api/jobs", json=body).json()["id"]
+    assert _wait(jid)["status"] == "done"
+    job = pipeline.Job.load(jid)
+    job.state["status"], job.state["step"] = "paused", "quota"
+    job.save()
+    job.run(lambda: None)
+    assert job.state["status"] == "paused" and job.state["step"] == "quota"
+    # deleting a running video is refused and does not make it invisible
+    jid2 = client.post("/api/jobs", json=body).json()["id"]
+    r = client.delete(f"/api/jobs/{jid2}")
+    assert r.status_code == 409
+    assert client.post(f"/api/jobs/{jid2}/languages/hi").status_code == 409     # still known as running
+    assert _wait(jid2)["status"] == "done"
+
+
+def test_poem_in_another_language_is_kept_and_english_written_to_rhyme():
+    poem = "Alle meine Entchen schwimmen auf dem See,\nKöpfchen in das Wasser, Schwänzchen in die Höh."
+    body = {"mode": "2d", "engine": "images", "languages": ["de", "en"], "vocals": "tts", "poem": poem, "target_seconds": 30}
+    j = _wait(client.post("/api/jobs", json=body).json()["id"])
+    assert j["status"] == "done", j.get("error")
+    s = j["script"]
+    assert s["rhyme"]["de"].get("skipped") and s["rhyme"]["en"]["ok"]
+    assert all(sc["line_de"] in poem for sc in s["scenes"])                       # the owner's own German words
+    assert j["outputs"]["de"]["video"] and j["outputs"]["en"]["video"]

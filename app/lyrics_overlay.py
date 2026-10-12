@@ -75,6 +75,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         words = text.split()
         if not words:
             continue
+        if i + 1 < len(cues):                          # never overlap the next line (libass would stack them)
+            end = min(end, cues[i + 1][0] - 0.25 - 0.35 - 0.02)
+            end = max(end, start + 0.4)
         sung = max(0.4, end - start - 0.3)            # caption end includes a 0.3 s tail
         weights = [max(1, len(wd)) for wd in words]
         total_w = sum(weights)

@@ -67,12 +67,17 @@ def mock_json(prompt: str) -> dict:
                 "mood": _mock_mood(prompt), "tags": ["nursery rhyme", "kids", "hop", "बाल गीत"], "about": "A friendly character hops and waves in a sunny meadow.",
                 "scenes": [{"index": i, "line_en": _RHYME_EN[i % len(_RHYME_EN)], "line_hi": _RHYME_HI[i % len(_RHYME_HI)],
                             "is_chorus": i in (0, n - 1) and n >= 6, "visual": f"segment {i + 1}"} for i in range(n)]}
+    if prompt.startswith("SPLIT."):   # the owner's poem laid over the scenes
+        n = int(re.search(r"exactly (\d+) lines", prompt).group(1))
+        poem = re.search(r"POEM:\n(.*?)\nPICTURES:", prompt, flags=re.S).group(1)
+        lines = [x.strip() for x in poem.splitlines() if x.strip()]
+        return {"lines": [lines[i % len(lines)] for i in range(n)]}
     if prompt.startswith("JUDGE."):   # independent rhyme judge: agrees with everything unless told otherwise
         n = len(re.findall(r"^Couplet \d+:", prompt, flags=re.M))
         return {"couplets": [{"n": k + 1, "end_a": "x", "end_b": "x", "rhymes": True} for k in range(n)]}
     if prompt.startswith("REPAIR."):   # rhyme repair: partner's sound is given in the prompt
         idx = [int(x) for x in re.findall(r"line (\d+) REWRITE", prompt)]
-        pairs = re.findall(r'sound "-([a-z]*)" \(word: ([^)]*)\)', prompt)
+        pairs = re.findall(r'sound "-([^"]*)" \(word: ([^)]*)\)', prompt)
         return {"lines": [{"index": i, "text": f"repaired line {i} {word.strip()}".strip(), "end_word": word.strip(), "end_sound": sn}
                           for i, (sn, word) in zip(idx, pairs)]}
     if "children's songwriter" in prompt and '"end_sound"' in prompt:   # native rhyming lyrics

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from . import languages
+from . import languages, retry
 from .costs import CostLedger
 from .gemini_client import generate_json
 
@@ -26,22 +26,42 @@ _BLOCKS = [("hi", 0x0900, 0x097F), ("bn", 0x0980, 0x09FF), ("pa", 0x0A00, 0x0A7F
 
 
 # Romanised Hindi ("lakdi ki kathi, kathi pe ghoda"): common words a Hindi theme/poem typed in Latin letters contains
-_HINGLISH = {"ki", "ka", "ke", "ko", "se", "me", "mein", "pe", "par", "hai", "hain", "tha", "thi", "the", "aur", "ek", "do",
-             "teen", "char", "mera", "meri", "mere", "tera", "teri", "hum", "tum", "ye", "yeh", "wo", "woh", "nahi", "nahin",
-             "kya", "kaise", "kahan", "chal", "chalo", "aao", "gaya", "gayi", "gaye", "wala", "wali", "bhi", "toh", "na",
-             "ho", "bada", "chhota", "chota", "mama", "mummy", "beta", "raja", "rani", "ghoda", "kathi", "lakdi", "chanda",
-             "machli", "pani", "jal", "billi", "kutta", "hathi", "bandar", "titli", "phool", "chidiya", "gol", "roti",
-             "dudh", "doodh", "nani", "dadi", "dada", "chhoti", "nanha", "nanhi", "pyara", "pyari", "sundar", "aasman",
-             "tara", "sooraj", "suraj", "chand", "baarish", "barish", "gaana", "geet", "kavita", "bachche", "bachcha",
-             "khel", "khelo", "sona", "neend", "lori", "raat", "din", "subah", "udi", "udta", "chala", "chali", "aaya", "aayi"}
+_HINGLISH = {"ki", "ka", "ke", "ko", "se", "mein", "pe", "hai", "hain", "tha", "thi", "aur", "ek", "teen", "char",
+             "mera", "meri", "mere", "tera", "teri", "hum", "tum", "yeh", "woh", "nahi", "nahin", "kya", "kaise", "kahan",
+             "chal", "chalo", "aao", "gaya", "gayi", "gaye", "wala", "wali", "bhi", "toh", "bada", "chhota", "chota",
+             "mummy", "beta", "raja", "rani", "ghoda", "kathi", "lakdi", "chanda", "machli", "pani", "jal", "billi",
+             "kutta", "hathi", "bandar", "titli", "phool", "chidiya", "gol", "roti", "dudh", "doodh", "nani", "dadi",
+             "chhoti", "nanha", "nanhi", "pyara", "pyari", "sundar", "aasman", "tara", "sooraj", "suraj", "chand",
+             "baarish", "barish", "gaana", "geet", "kavita", "bachche", "bachcha", "khel", "khelo", "sona", "neend",
+             "lori", "raat", "subah", "udi", "udta", "chala", "chali", "aaya", "aayi", "mama", "dada", "din"}
+# other Latin-script languages we support: a few very common words each (a pasted German poem is German, not English)
+_LATIN_STOP = {"de": {"und", "ist", "die", "der", "das", "ich", "nicht", "alle", "meine", "ein", "eine", "auf", "mit", "sind", "wir", "du"},
+               "fr": {"le", "la", "les", "et", "est", "un", "une", "dans", "je", "vous", "frère", "mon", "ma", "sur", "nous"},
+               "es": {"el", "los", "las", "y", "es", "un", "una", "que", "con", "mi", "para", "por", "del", "yo"},
+               "it": {"il", "lo", "gli", "e", "è", "un", "una", "che", "con", "mio", "per", "del", "io", "sono"},
+               "pt": {"o", "os", "as", "e", "é", "um", "uma", "que", "com", "meu", "para", "do", "da", "eu"},
+               "id": {"dan", "yang", "di", "ke", "ini", "itu", "saya", "aku", "ada", "tidak", "dengan", "untuk"}}
 
 
 def hinglish(text: str) -> bool:
     words = re.findall(r"[a-z]+", (text or "").lower())
     if len(words) < 2:
         return False
-    hits = sum(w in _HINGLISH for w in words)
-    return hits >= 2 and hits / len(words) >= 0.35
+    hits = {w for w in words if w in _HINGLISH}
+    return len(hits) >= 2 and sum(w in _HINGLISH for w in words) / len(words) >= 0.4
+
+
+def latin_language(text: str) -> str | None:
+    """de/fr/es/... for Latin-script text when its common words say so; None for English or unknown."""
+    words = re.findall(r"[a-zà-ÿ]+", (text or "").lower())
+    if len(words) < 3:
+        return None
+    best, score = None, 0.0
+    for code, stop in _LATIN_STOP.items():
+        hits = [w for w in words if w in stop]
+        if len(set(hits)) >= 2 and len(hits) / len(words) > score:
+            best, score = code, len(hits) / len(words)
+    return best if score >= 0.2 else None
 
 
 def detect_language(text: str) -> str | None:
@@ -56,7 +76,11 @@ def detect_language(text: str) -> str | None:
     if not counts:
         return None
     best = max(counts, key=counts.get)
-    return "hi" if best == "en" and hinglish(text) else best
+    if best != "en":
+        return best
+    if hinglish(text):
+        return "hi"
+    return latin_language(text) or "en"
 
 
 def source_language(params: dict) -> tuple[str, bool]:
@@ -90,13 +114,25 @@ def norm_sound(s: str) -> str:
 
 
 def rhymes(a: str, b: str) -> bool:
+    """Two Latin-letter ending sounds rhyme when the last vowel group and everything after it match, and
+    (for a vowel ending) the consonant before it does too: ara/aara yes, an/aan yes, ina/ara no, ar/ur no."""
+    if (a or "").strip() and (a or "").strip() == (b or "").strip():
+        return True                                  # identical endings, in any script (Devanagari keys included)
     a, b = norm_sound(a), norm_sound(b)
     if not a or not b:
         return False
     if a == b:
         return True
-    short, long = sorted((a, b), key=len)
-    return len(short) >= 2 and long.endswith(short)
+    def parts(s):
+        m = re.search(r"([aeiouy]+)([^aeiouy]*)$", s)
+        return (m.group(1), m.group(2), s[:m.start()]) if m else None
+    pa, pb = parts(a), parts(b)
+    if not pa or not pb or pa[0] != pb[0] or pa[1] != pb[1]:
+        return False
+    if pa[1]:
+        return True
+    ca, cb = pa[2][-1:], pb[2][-1:]
+    return ca == cb or not ca or not cb
 
 
 def failing(sounds: list[str]) -> list[tuple[int, int]]:
@@ -190,7 +226,11 @@ def _match(a: dict, b: dict) -> bool:
         return False
     if a["final"] is None or b["final"] is None:
         return a["final"] is None and b["final"] is None and a["cons"] == b["cons"] and a["prev"] == b["prev"]
-    return a["final"] == b["final"] and (a["cons"] == b["cons"] or a["prev"] == b["prev"])
+    if a["final"] != b["final"]:
+        return False
+    # same consonant (रानी / पानी); or the same SHORT vowel before (चढ़ी / लगी, गए / रहे) - a long one is not enough
+    # (सोना / रोता, पानी / हाथी do not rhyme)
+    return a["cons"] == b["cons"] or (a["prev"] == b["prev"] == "a")
 
 
 _HELPERS = {"है", "हैं", "में", "के", "का", "की", "को", "से", "पर", "पे", "था", "थी", "थे", "ना", "न", "भी", "तो", "हो",
@@ -203,22 +243,23 @@ def rhymes_devanagari(a: str, b: str) -> bool | None:
     wb = [w for w in re.split(r"[\s,।!?.;:\-\"'()]+", b or "") if is_devanagari(w)]
     if not wa or not wb:
         return None
-    # the same helper word on both lines (है, में, के...) is not a rhyme by itself: compare the words before it;
-    # the same CONTENT word on both lines (... जाता है / ... जाता है) is a rhyme
-    while wa and wb and wa[-1] == wb[-1]:
-        if wa[-1] not in _HELPERS:
-            return True
+    # helper words at the end (है, हैं, में, के...) are not the rhyme: compare the content words before them
+    if wa == wb:
+        return True                              # identical lines (a repeated chorus)
+    while len(wa) > 1 and len(wb) > 1 and wa[-1] in _HELPERS and wb[-1] in _HELPERS:   # both end in a helper: look before it
         wa, wb = wa[:-1], wb[:-1]
-    if not wa or not wb:                         # identical lines (a repeated chorus): fine
+    if wa[-1] == wb[-1] and wa[-1] not in _HELPERS:   # the same content word (... जाता है / ... जाता है)
         return True
     ea, eb = _ending(wa[-1]), _ending(wb[-1])
     return bool(ea and eb) and _match(ea, eb)
 
 
 # ---- English: spelling -> rough sound of the word's ending, for the simple words toddler rhymes use
-_EN_TAIL = [("eigh", "A"), ("igh", "I"), ("ough", "O"), ("augh", "O"), ("tion", "shun"), ("ee", "E"), ("ea", "E"),
-            ("ie", "E"), ("ey", "A"), ("ay", "A"), ("ai", "A"), ("oo", "U"), ("ue", "U"), ("ew", "U"), ("oa", "O"),
-            ("oe", "O"), ("ck", "k"), ("ph", "f"), ("ll", "l"), ("ss", "s"), ("tt", "t"), ("nn", "n"), ("pp", "p")]
+_EN_TAIL = [("eigh", "A"), ("igh", "I"), ("ough", "O"), ("augh", "O"), ("tion", "shun"), ("oor", "or"), ("ore", "or"),
+            ("our", "or"), ("eer", "Er"), ("ear", "Er"), ("ere", "Er"), ("air", "Er"), ("are", "Er"), ("ee", "E"),
+            ("ea", "E"), ("ie", "E"), ("ey", "A"), ("ay", "A"), ("ai", "A"), ("oo", "U"), ("ue", "U"), ("ew", "U"),
+            ("oa", "O"), ("oe", "O"), ("ck", "k"), ("ph", "f"), ("ll", "l"), ("ss", "s"), ("tt", "t"), ("nn", "n"),
+            ("pp", "p"), ("x", "ks")]
 _VOW = set("aeiouAEIOU")
 # very common words whose spelling misleads the rules above (sound of the ending, in the same notation)
 _EN_WORDS = {"done": "un", "one": "un", "none": "un", "gone": "on", "come": "um", "some": "um", "love": "uv", "dove": "uv",
@@ -232,7 +273,12 @@ _EN_WORDS = {"done": "un", "one": "un", "none": "un", "gone": "on", "come": "um"
              "says": "ez", "eyes": "Iz", "shoes": "Uz", "head": "ed", "bread": "ed", "read": "Ed", "laugh": "af",
              "water": "er", "mother": "er", "father": "er", "brother": "er", "sister": "er", "car": "ar", "star": "ar",
              "are": "ar", "far": "ar", "warm": "orm", "want": "ont", "what": "ot", "put": "Ut", "foot": "Ut", "good": "Ud",
-             "could": "Ud", "would": "Ud", "should": "Ud", "book": "Uk", "look": "Uk", "took": "Uk", "cook": "Uk"}
+             "could": "Ud", "would": "Ud", "should": "Ud", "book": "Uk", "look": "Uk", "took": "Uk", "cook": "Uk",
+             "door": "or", "floor": "or", "four": "or", "more": "or", "pour": "or", "your": "or", "here": "Er",
+             "near": "Er", "dear": "Er", "ear": "Er", "year": "Er", "air": "Er", "pear": "Er", "quack": "ak",
+             "back": "ak", "duck": "uk", "truck": "uk", "six": "iks", "mix": "iks", "fox": "oks", "box": "oks",
+             "socks": "oks", "rocks": "oks", "rain": "An", "train": "An", "plane": "An", "nose": "Oz", "toes": "Oz",
+             "goes": "Oz", "grows": "Oz", "clap": "ap", "nap": "ap", "jump": "ump", "up": "up", "cup": "up"}
 
 
 def english_key(word: str) -> str:
@@ -240,8 +286,13 @@ def english_key(word: str) -> str:
     w = re.sub(r"[^a-z]", "", (word or "").lower().replace("'", ""))
     if w in _EN_WORDS:
         return _EN_WORDS[w]
+    w = w.replace("qu", "kw")                                     # the u in qu is not a vowel (quack / back)
     if len(w) < 2:
         return ""
+    for a, b in _EN_TAIL[:13]:                                    # long tails first (ear/air/ore/are...) before the e-rules
+        if w.endswith(a):
+            w = w[: -len(a)] + b
+            break
     if w[-1] in "aeiou" and sum(c in "aeiou" for c in w) == 1:  # go, so, hi, flu: a lone final vowel is long
         return w[-1].upper()
     if w.endswith("ie") and len(w) <= 3:                           # pie, tie
@@ -251,7 +302,9 @@ def english_key(word: str) -> str:
     elif w.endswith("e") and len(w) >= 3 and w[-2] == "r" and w[-3] in "aeiou":
         w = w[:-1]                                                 # are -> ar, here -> her
     elif w.endswith("y") and len(w) >= 2 and w[-2] not in _VOW:
-        w = w[:-1] + ("I" if not any(c in "aeiou" for c in w[:-1]) else "E")   # sky -> I, happy -> E
+        if not any(c in "aeiou" for c in w[:-1]):
+            return "I"                                                # sky, fly, my
+        return w[-2] + "E"                                            # happy -> pE, bunny -> nE (not every -y word rhymes)
     elif w.endswith("ou"):
         w = w[:-2] + "U"                                           # you
     for a, b in _EN_TAIL:
@@ -344,22 +397,34 @@ sounds from the last stressed vowel to the end of that word, spelled in simple L
 Return JSON: {{"title": "short song title in {name}", "lines": [{{"text": str, "end_word": str, "end_sound": str}}]}}"""
 
 
+def end_word(text: str) -> str:
+    """The word that carries the rhyme: punctuation stripped, Hindi helper words (है, में...) skipped."""
+    words = [w for w in re.split(r"[\s,।!?.;:\-\"'()]+", text or "") if w]
+    while len(words) > 1 and words[-1] in _HELPERS:
+        words = words[:-1]
+    return words[-1] if words else ""
+
+
 def _repair_prompt(scenes: list[dict], lang: str, meaning_key: str, texts: list[str], sounds: list[str],
                    fixes: list[tuple[int, int]]) -> tuple[str, list[int]]:
     name = languages.name(lang)
     song = "\n".join(f"{i + 1}. {t}   (ends -{sounds[i]})" for i, t in enumerate(texts))
-    todo, rewrite = [], []
+    todo, rewrite, root = [], [], {}
     for a, b in fixes:
         ca, cb = bool(scenes[a].get("is_chorus")), bool(scenes[b].get("is_chorus"))
-        if ca and cb:
-            continue                      # two chorus lines are identical by definition
+        if ca and cb and texts[a] == texts[b]:
+            continue                      # the same chorus line twice: nothing to fix
         # never rewrite a chorus line (it repeats elsewhere); otherwise rewrite the second line of the pair
-        keep, change = (b, a) if cb else (a, b)
+        keep, change = (b, a) if (cb and not ca) else (a, b)
+        if keep in rewrite:               # odd count: (3,4) and (4,5) both failing -> aim 5 at line 3's ending too
+            keep = root.get(keep, keep)
+        root[change] = keep
         rewrite.append(change)
         src = scenes[change].get(meaning_key) or scenes[change]["line_en"]
+        w = end_word(texts[keep])
+        ending = f'"-{devanagari_key(w)}"' if is_devanagari(w) else f'"-{sounds[keep]}"'
         todo.append(f'- line {change + 1} REWRITE: it must rhyme with line {keep + 1}, which ends with the sound '
-                    f'"-{sounds[keep]}" (word: {texts[keep].split()[-1] if texts[keep].split() else ""}). '
-                    f'Meaning to keep: "{src}"')
+                    f'{ending} (word: {w}). Meaning to keep: "{src}"')
     prompt = f"""REPAIR. Song in {name} for toddlers. These couplets do NOT rhyme yet: the two lines of a couplet must END with
 words that rhyme (same final sound). Rewrite ONLY the lines marked REWRITE, so that their last word rhymes with the
 partner line; keep the meaning, 4-9 simple words, about the same rhythm. Do not change any other line.
@@ -395,9 +460,45 @@ Return JSON: {{"couplets": [{{"n": 1, "end_a": "last word of the first line, in 
     try:
         res = generate_json(prompt, ledger, f"rhyme check {lang}").get("couplets") or []
         verdict = {int(x["n"]) - 1: bool(x["rhymes"]) for x in res}
+    except retry.QuotaExhausted:
+        raise
     except Exception:  # noqa: BLE001
         return None
     return [pairs[k] for k in range(len(pairs)) if verdict.get(k) is False]
+
+
+def source_poem(params: dict) -> str:
+    from . import presets
+    if params.get("preset"):
+        pr = presets.get(params["preset"])
+        if pr and pr.get("poem"):
+            return pr["poem"]
+    return (params.get("poem") or "").strip()
+
+
+def _split_poem(poem: str, scenes: list[dict], lang: str, ledger: CostLedger) -> list[str] | None:
+    """Lay the owner's own poem (any language) over the scenes, one line each, keeping its words."""
+    n = len(scenes)
+    if not poem or not n:
+        return None
+    story = "\n".join(f'{i + 1}. {s.get("line_en", "")}' for i, s in enumerate(scenes))
+    prompt = f"""SPLIT. Below is a poem written by the owner in {languages.name(lang)}, and the {n} pictures of the video with the
+English meaning of each. Give the poem's text for each picture: exactly {n} lines, in order, keeping the owner's own words
+(native script, no translation). Match lines to pictures by meaning; if the poem has fewer lines than pictures, repeat its
+chorus or last lines; if more, join short lines.
+POEM:
+{poem}
+PICTURES:
+{story}
+Return JSON: {{"lines": [{n} strings]}}"""
+    try:
+        data = generate_json(prompt, ledger, f"poem lines {lang}",
+                             validate=lambda d: len(d.get("lines") or []) == n and all(str(x).strip() for x in d["lines"]))
+    except retry.QuotaExhausted:
+        raise
+    except Exception:  # noqa: BLE001
+        return None
+    return [str(x).strip() for x in data["lines"]]
 
 
 # ------------------------------------------------------------------------------------ main entry
@@ -409,6 +510,13 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
     key = f"line_{lang}"
     src, authoritative = source_language(params)
     report_store = script.setdefault("rhyme", {})
+    if authoritative and lang == src and not all(s.get(key) for s in scenes):
+        # a poem in a language other than EN/HI: the script only carries EN+HI, so lay the owner's own lines over
+        # the scenes first (one cheap call) instead of rewriting their poem from the English translation
+        lines = _split_poem(source_poem(params), scenes, lang, ledger)
+        if lines:
+            for s, text in zip(scenes, lines):
+                s[key] = text
     if authoritative and lang == src and all(s.get(key) for s in scenes):
         report_store[lang] = {"ok": True, "skipped": "original poem kept as written", "couplets": len(couplets(n)), "failed": 0}
         return report_store[lang]
@@ -418,14 +526,16 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
     draft = [s.get(key, "") for s in scenes] if all(s.get(key) for s in scenes) else None
     keep_draft = bool(draft) and lang == src
     try:
-        data = generate_json(_write_prompt(scenes, lang, meaning_key, draft, keep_draft), ledger, f"rhyming lyrics {lang}")
-        lines = data.get("lines") or []
-        if len(lines) != n or not all(isinstance(x, dict) and x.get("text") for x in lines):
-            raise ValueError(f"expected {n} lines, got {len(lines)}")
+        ok_shape = lambda d: len(d.get("lines") or []) == n and all(isinstance(x, dict) and x.get("text") for x in d["lines"])
+        data = generate_json(_write_prompt(scenes, lang, meaning_key, draft, keep_draft), ledger, f"rhyming lyrics {lang}",
+                             validate=ok_shape)
+        lines = data["lines"]
+    except retry.QuotaExhausted:
+        raise                                        # pause the job; never ship a plain translation because of quota
     except Exception as exc:  # noqa: BLE001 - never block a video on this: fall back to plain translation
         for s, text in zip(scenes, translate_lines(script, lang, ledger)):
             s[key] = text
-        report_store[lang] = {"ok": False, "couplets": len(couplets(n)), "failed": len(couplets(n)), "tries": 0,
+        report_store[lang] = {"ok": False, "couplets": len(couplets(n)), "failed": len(couplets(n)), "tries": 0, "retry": True,
                               "note": f"rhyming step failed ({str(exc)[:120]}); used a plain translation"}
         return report_store[lang]
 
@@ -433,13 +543,25 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
     sounds = [str(x.get("end_sound", "")) for x in lines]
     script.setdefault("titles", {})[lang] = data.get("title") or script.get("titles", {}).get(lang)
 
-    def unify_chorus() -> None:   # chorus lines must be identical, including their sound
-        first = next((i for i, s in enumerate(scenes) if s.get("is_chorus")), None)
-        if first is None:
-            return
+    def unify_chorus() -> None:
+        """Every repeat of the hook must be word-for-word the first one. A hook may be more than one line
+        (a block of consecutive chorus lines): the k-th line of each later block copies the k-th of the first."""
+        blocks, cur = [], []
         for i, s in enumerate(scenes):
             if s.get("is_chorus"):
-                texts[i], sounds[i] = texts[first], sounds[first]
+                cur.append(i)
+            elif cur:
+                blocks.append(cur)
+                cur = []
+        if cur:
+            blocks.append(cur)
+        if len(blocks) < 2:
+            return
+        first = blocks[0]
+        for blk in blocks[1:]:
+            for k, i in enumerate(blk):
+                src = first[min(k, len(first) - 1)]
+                texts[i], sounds[i] = texts[src], sounds[src]
 
     unify_chorus()
 
@@ -448,6 +570,9 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
         For Devanagari the strict check by code decides on its own (the model's Latin "sounds" are unreliable)."""
         bad = set(failing(sounds))
         judged = set(_judge(texts, lang, ledger) or [])
+        same = {(a, b) for a, b in couplets(n) if texts[a].strip() == texts[b].strip()}   # a repeated chorus line
+        judged -= same
+        bad -= same
         for a, b in couplets(n):
             strict = rhymes_devanagari(texts[a], texts[b])
             if strict is None and lang == "en":
@@ -470,6 +595,8 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
             break
         try:
             fixed = generate_json(prompt, ledger, f"rhyme repair {lang}").get("lines") or []
+        except retry.QuotaExhausted:
+            raise
         except Exception:  # noqa: BLE001
             break
         for x in fixed:

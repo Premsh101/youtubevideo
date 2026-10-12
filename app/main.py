@@ -164,16 +164,9 @@ def api_add_language(job_id: str, lang: str) -> dict:
     """Voice an existing video in another language: reuses all visuals, only audio + text are new."""
     if lang not in languages.LANGUAGES:
         raise HTTPException(400, f"unsupported language {lang}")
-    live = _jobs.get(job_id)
-    if live and live.state["status"] in ("running", "waiting", "queued"):
-        raise HTTPException(409, "this video is still being processed")
-    try:
-        job = pipeline.Job.load(job_id)
-    except KeyError:
-        raise HTTPException(404)
+    job = _load_idle_job(job_id)
     if job.state.get("status") != "done" and not job.state.get("outputs"):
         raise HTTPException(409, "finish (or resume) the video first")
-    _jobs[job_id] = job
     threading.Thread(target=job.add_language, args=(lang,), daemon=True, name=f"lang-{job_id}-{lang}").start()
     return {"ok": True, "job": job_id, "language": lang}
 
@@ -208,9 +201,15 @@ def api_change_vocals(job_id: str, lang: str, body: VocalsIn) -> dict:
 
 
 def _load_idle_job(job_id: str) -> pipeline.Job:
+    """The one Job object for this id (two objects for one video would overwrite each other's job.json)."""
     live = _jobs.get(job_id)
-    if live and live.state["status"] in ("running", "waiting", "queued"):
+    if live and (live.state["status"] in ("running", "waiting", "queued") or live.busy()):
         raise HTTPException(409, "this video is still being processed")
+    if live:
+        fresh = pipeline.load_job(job_id)        # idle: nothing is writing it, so the file is the truth
+        if fresh:
+            live.state = fresh
+        return live
     try:
         job = pipeline.Job.load(job_id)
     except KeyError:
@@ -399,9 +398,10 @@ def api_resume_job(job_id: str) -> dict:
 
 @app.delete("/api/jobs/{job_id}")
 def api_delete_job(job_id: str) -> dict:
-    live = _jobs.pop(job_id, None)
-    if live and live.state["status"] in ("running", "waiting"):
+    live = _jobs.get(job_id)
+    if live and (live.state["status"] in ("running", "waiting", "queued") or live.busy()):
         raise HTTPException(409, "job is still running")
+    _jobs.pop(job_id, None)
     pipeline.delete_job(job_id)
     return {"ok": True}
 
@@ -501,7 +501,7 @@ def api_apply_logo_all() -> dict:
         _rebrand_state.update(running=True, done=0, total=len(ids))
         try:
             for job_id in ids:
-                job = pipeline.Job.load(job_id)
+                job = _jobs.get(job_id) or pipeline.Job.load(job_id)
                 _jobs[job_id] = job
                 job.rebrand()
                 _rebrand_state["done"] += 1

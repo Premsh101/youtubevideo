@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import subprocess
 import time
 import traceback
@@ -38,8 +39,19 @@ class Job:
             self.params = self.state["params"]
             prev = (existing.get("cost") or {}).get("total_inr", 0.0)
             self.state["spent_before_inr"] = existing.get("spent_before_inr", 0.0) + prev
-            self.state["error"] = None
+        self._busy = 0            # publishing or another free operation in progress (not a pipeline run)
         self.save()
+
+    _locks: dict[str, "threading.Lock"] = {}
+
+    def _lock(self):
+        return self._locks.setdefault(self.id, threading.Lock())
+
+    def busy(self) -> bool:
+        return getattr(self, "_busy", 0) > 0
+
+    def set_busy(self, on: bool) -> None:
+        self._busy = max(0, getattr(self, "_busy", 0) + (1 if on else -1))
 
     @classmethod
     def load(cls, job_id: str) -> "Job":
@@ -54,10 +66,13 @@ class Job:
 
     # ---------------------------------------------------------------- helpers
     def save(self) -> None:
-        self.state["cost"] = self.ledger.summary()
-        self.state["cost"]["total_inr_all_attempts"] = round(
-            self.state["cost"]["total_inr"] + self.state.get("spent_before_inr", 0.0), 2)
-        (self.dir / "job.json").write_text(json.dumps(self.state, ensure_ascii=False, indent=1))
+        with self._lock():
+            self.state["cost"] = self.ledger.summary()
+            self.state["cost"]["total_inr_all_attempts"] = round(
+                self.state["cost"]["total_inr"] + self.state.get("spent_before_inr", 0.0), 2)
+            tmp = self.dir / "job.json.tmp"
+            tmp.write_text(json.dumps(self.state, ensure_ascii=False, indent=1))
+            tmp.replace(self.dir / "job.json")
 
     def step(self, name: str, progress: float) -> None:
         self.state["step"] = name
@@ -68,6 +83,8 @@ class Job:
     def run(self, target=None) -> None:
         """Run to completion. On Google quota exhaustion the job pauses and auto-resumes;
         everything already generated is cached, so a resume only pays for what is missing."""
+        free = target is not None                       # rebrand / lyrics toggle / add-language: not the pipeline
+        prev_status, prev_step, prev_progress = self.state.get("status"), self.state.get("step"), self.state.get("progress", 0.0)
         target = target or self._run
         retry.set_status_callback(lambda msg: self.step(msg, self.state["progress"]))
         pause_idx = 0
@@ -75,7 +92,12 @@ class Job:
             self.state["attempts"] = self.state.get("attempts", 0) + 1
             try:
                 self.state["status"] = "running"
+                self.state["error"] = None
                 target()
+                if free and prev_status in ("paused", "error"):   # a free fix-up must not hide an unfinished video
+                    self.state["status"], self.state["step"], self.state["progress"] = prev_status, prev_step, prev_progress
+                    self.save()
+                    return
                 self.state["status"] = "done"
                 self.step("done", 1.0)
                 return
@@ -189,7 +211,13 @@ class Job:
         """Lyrics of this language: written natively so the couplets rhyme (not translated line by line),
         then checked; done once per language (script["rhyme"][lang] records the result)."""
         script = self.state["script"]
-        if lang in (script.get("rhyme") or {}):
+        report = (script.get("rhyme") or {}).get(lang)
+        if report and not report.get("retry"):
+            return
+        if not report and lang in (self.state.get("outputs") or {}) and all(s.get(f"line_{lang}") for s in script["scenes"]):
+            # a video made before the rhyme step existed: its words are already published/on screen - keep them
+            script.setdefault("rhyme", {})[lang] = {"ok": None, "skipped": "lyrics of an existing video kept",
+                                                    "couplets": len(lyrics.couplets(len(script["scenes"]))), "failed": 0}
             return
         self.step(f"Writing the {languages.name(lang)} lyrics so they rhyme", self.state["progress"])
         report = lyrics.ensure_rhyming(script, lang, self.params, self.ledger)
@@ -218,8 +246,17 @@ class Job:
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1]
 
-    def _planned_line_starts(self, planned_durations: list[float]) -> list[float]:
-        return [t + 0.4 for t in render.scene_starts(planned_durations, self._xfade())]
+    def _planned_line_starts(self, planned_durations: list[float], total: float | None = None) -> list[float]:
+        """Where each line should start if the singer follows the plan: the song sections laid end to end (+0.4 s
+        for the singer's entry). With `total`, the plan is scaled to the song that actually came back."""
+        secs = elevenlabs.chunk_seconds(planned_durations, self._xfade())
+        planned_total = sum(secs)
+        scale = (total - 0.4) / planned_total if total and planned_total > 0 and total > 1 else 1.0
+        starts, t = [], 0.0
+        for d in secs:
+            starts.append(round(0.4 + t * scale, 3))
+            t += d
+        return starts
 
     def _timeline_sung(self, lang: str, song: Path, planned_durations: list[float],
                        measured: list[float] | None = None) -> tuple[list[float], list[float], float, list[float], str]:
@@ -231,13 +268,19 @@ class Job:
             line_t, method = list(measured), "stt"
         else:
             line_t, method = align.line_starts(song, lines, total, planned_starts, self.ledger)
-        # scene i begins `lead` before its line is sung; scene 0 always starts at 0
-        bounds = [0.0] + [max(0.0, t - lead) for t in line_t[1:]]
+        # scene i begins `lead` before its line is sung; scene 0 always starts at 0 (the song's intro is scene 0)
+        def _bounds(ts: list[float]) -> list[float]:
+            b = [0.0]
+            for t in ts[1:]:                       # a scene is never shorter than a cross-fade + 0.8 s: nudge, don't drop
+                b.append(max(t - lead, b[-1] + xf + 0.8))
+            return b
+        bounds = _bounds(line_t)
+        if bounds[-1] > total - (xf + 0.8):        # measured times do not fit the song: fall back to the (scaled) plan
+            line_t, method = self._planned_line_starts(planned_durations, total), "plan"
+            bounds = _bounds(line_t)
+            if bounds[-1] > total - (xf + 0.8):
+                bounds = [b * (total - (xf + 0.8)) / bounds[-1] for b in bounds]
         durations = [b2 - b1 + xf for b1, b2 in zip(bounds, bounds[1:])] + [total - bounds[-1]]
-        if min(durations) < xf + 0.8:  # alignment produced a degenerate scene: fall back to the plan
-            bounds = [0.0] + [max(0.0, t - lead) for t in planned_starts[1:]]
-            durations = [b2 - b1 + xf for b1, b2 in zip(bounds, bounds[1:])] + [max(xf + 1, total - bounds[-1])]
-            line_t, method = planned_starts, "plan"
         durations = render.frame_exact(durations, xf, config.FPS)
         starts = render.scene_starts(durations, xf)
         return durations, starts, starts[-1] + durations[-1], line_t, method
@@ -401,6 +444,7 @@ class Job:
         md = moods.get(vocal["mood"])
         self.state["mood"] = self._video_mood()
         previous = dict((self.state.get("outputs") or {}).get(lang) or {})
+        tag = f"_v{int(time.time()) % 1000000}" if previous.get("video") else ""   # re-voice: never overwrite the old files
         if vocal["mode"] == "sung":
             self.step(f"Composing the {name} song", progress)
             natural = self._natural_lengths()
@@ -412,7 +456,7 @@ class Job:
             song, check = self._compose_checked(scenes, planned, lang, vocal, name, progress)
             self.step(f"Finding where each {name} line is sung", progress + 0.05)
             durations, starts, total, line_t, method = self._timeline_sung(
-                lang, song, planned, check["starts"] if check.get("available") and all(check["heard"]) else None)
+                lang, song, planned, check["starts"] if check.get("available") and sum(check["heard"]) >= max(2, 0.6 * len(scenes)) else None)
             voices = [{"path": None, "text": s[f"line_{lang}"], "chorus": bool(s.get("is_chorus")),
                        "duration": max(0.8, (line_t[i + 1] if i + 1 < len(line_t) else total) - line_t[i] - 0.3)}
                       for i, s in enumerate(scenes)]
@@ -425,25 +469,29 @@ class Job:
         self.state.setdefault("timelines", {})[lang] = {
             "durations": durations, "starts": starts, "total": total, "xfade": self._xfade(),
             "voice_lead": lead, "sync": method,
-            "line_seconds": [round(v["duration"], 3) for v in voices], "voice_files": [v["path"] for v in voices]}
+            "line_seconds": [round(v["duration"], 3) for v in voices], "voice_files": [v["path"] for v in voices],
+            "line_starts": [round(t, 3) for t in (line_t if song is not None else [s + lead for s in starts])]}
         self.step(f"Cutting the pictures to the {name} audio" if self.params.get("engine") != "cutout"
                   else f"Animating the characters to the {name} audio", progress + 0.1)
         silent = self._render_visuals(lang, durations, song)
         self.step(f"Mixing {name} audio", progress + 0.2)
         if song is not None:
-            audio = render.song_to_track(song, total, self.dir / f"audio_{lang}.wav")
+            audio = render.song_to_track(song, total, self.dir / f"audio_{lang}{tag}.wav")
         else:
             music = get_music(total, self.state["script"]["title_en"], vocal["mood"])
-            audio = render.build_audio(voices, starts, total, music, self.dir / f"audio_{lang}.wav", lead,
+            audio = render.build_audio(voices, starts, total, music, self.dir / f"audio_{lang}{tag}.wav", lead,
                                        music_db=md["volume_db"], harmony=md["id"] not in ("sleepy", "calm"))
-        final = render.mux(silent, audio, self.dir / f"final_{lang}.mp4")
+        final = render.mux(silent, audio, self.dir / f"final_{lang}{tag}.mp4")
         silent.unlink(missing_ok=True)
-        srt = render.write_srt(voices, starts, self.dir / f"captions_{lang}.srt", lead)
+        # captions at the moment each line is really heard: sung lines from the song (scene 0 may sit after an intro)
+        srt = (render.write_srt(voices, line_t, self.dir / f"captions_{lang}{tag}.srt", 0.0) if song is not None
+               else render.write_srt(voices, starts, self.dir / f"captions_{lang}{tag}.srt", lead))
         thumb = render.thumbnail(final, self.dir / f"thumb_{lang}.jpg", at=min(3.0, total / 2))
         self.step(f"Writing {name} title, description & hashtags", progress + 0.25)
         meta = metadata.viral_metadata(self.state["script"], lang, self.state.get("cast") or [], self.ledger)
         self.state["outputs"][lang] = {
-            "video": final.name, "video_clean": final.name, "lyrics_on_screen": bool(self.params.get("lyrics_on_screen", True)),
+            "video": final.name, "video_clean": final.name, "audio": audio.name,
+            "lyrics_on_screen": bool(self.params.get("lyrics_on_screen", True)),
             "captions": srt.name, "thumbnail": thumb.name,
             "duration": round(total, 1), "language": name, "sync": method, "vocals": vocal,
             "mood_check": self._mood_check(song if song is not None else music, vocal["mood"]),
@@ -477,7 +525,7 @@ class Job:
             lyrics_overlay.finalize(self.dir / clean, self.dir / o["captions"] if lyrics else None, lang, logo, out)
             main = out.name
         o["video_main"] = main       # rhyme only: used for Shorts/Reels (no intro/outro there)
-        frozen = render.freezes(self.dir / main)
+        frozen = render.freezes(self.dir / clean)      # on the clean picture: moving lyrics would hide a frozen scene
         o["smoothness"] = {"frozen": frozen, "ok": not frozen}
         o["logo"] = logo is not None
         # channel intro + outro around the full video (YouTube, Facebook, download)
@@ -487,7 +535,7 @@ class Job:
             offset = render.bookend(self.dir / main, intro, outro, full, self.state["script"]["title_en"])
             o["video"], o["intro_seconds"], o["bookends"] = full.name, round(offset, 3), True
             o["captions_upload"] = render.shift_srt(self.dir / o["captions"], offset,
-                                                    self.dir / f"captions_{lang}_full.srt").name
+                                                    self.dir / o["captions"].replace(".srt", "_full.srt")).name
         else:
             o["video"], o["intro_seconds"], o["bookends"] = main, 0.0, False
             o["captions_upload"] = o["captions"]
@@ -594,13 +642,14 @@ class Job:
                          progress: float) -> tuple[Path, dict]:
         """Compose the song, listen back, and re-record once if the singer changed too many words."""
         mode = self.params.get("mode", "2d")
-        song = elevenlabs.compose(scenes, planned, lang, mode, self.ledger, voice=vocal["voice"], take=vocal["take"], mood=vocal["mood"])
+        song = elevenlabs.compose(scenes, planned, lang, mode, self.ledger, voice=vocal["voice"], take=vocal["take"],
+                                  mood=vocal["mood"], xfade=self._xfade())
         self.step(f"Listening back: did the singer sing the {name} words?", progress + 0.03)
         check = elevenlabs.verify(song, scenes, lang, self._planned_line_starts(planned), self.ledger)
         if check.get("available") and check["match"] < elevenlabs.MATCH_OK:
             self.step(f"The singer changed too many {name} words ({int(check['match'] * 100)}% kept); recording another take", progress + 0.04)
             song2 = elevenlabs.compose(scenes, planned, lang, mode, self.ledger, voice=vocal["voice"], take=vocal["take"],
-                                       mood=vocal["mood"], attempt=1)
+                                       mood=vocal["mood"], attempt=1, xfade=self._xfade())
             check2 = elevenlabs.verify(song2, scenes, lang, self._planned_line_starts(planned), self.ledger)
             if check2.get("available") and check2["match"] > check["match"]:
                 song, check = song2, check2
@@ -649,8 +698,10 @@ class Job:
 
     def change_vocals(self, lang: str, mode: str, voice: str, take: int, mood: str | None = None) -> None:
         """Re-voice one language of a finished video. Pictures and lyrics are reused; if it fails the old
-        video stays as it was."""
+        video stays as it was (new files get their own names; the old ones are removed only on success)."""
+        import copy
         old = dict((self.state.get("vocals") or {}).get(lang) or {})
+        snap = copy.deepcopy({"outputs": self.state["outputs"].get(lang), "timelines": (self.state.get("timelines") or {}).get(lang)})
         def go():
             try:
                 self._change_vocals(lang, mode, voice, take, mood)
@@ -659,8 +710,25 @@ class Job:
                     self.state["vocals"][lang] = old
                 else:
                     self.state.get("vocals", {}).pop(lang, None)
+                if snap["outputs"] is not None:
+                    self.state["outputs"][lang] = snap["outputs"]
+                if snap["timelines"] is not None:
+                    self.state.setdefault("timelines", {})[lang] = snap["timelines"]
                 raise
+            self._remove_superseded(snap["outputs"], self.state["outputs"][lang])
         self.run(go)
+
+    def _remove_superseded(self, old: dict | None, new: dict) -> None:
+        """Delete the previous version's files once a re-voice succeeded (keeps the folder from growing)."""
+        if not old:
+            return
+        keep = {v for v in new.values() if isinstance(v, str)} | {t.get("file") for t in new.get("thumbnails") or [] if isinstance(t, dict)}
+        for k in ("video", "video_clean", "video_main", "captions", "captions_upload", "audio"):
+            f = old.get(k)
+            if isinstance(f, str) and f not in keep and f.endswith((".mp4", ".srt", ".wav")):
+                (self.dir / f).unlink(missing_ok=True)
+                for extra in self.dir.glob(f"{Path(f).stem}_*vertical_*.mp4"):
+                    extra.unlink(missing_ok=True)
 
 
 def delete_job(job_id: str) -> None:

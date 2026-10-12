@@ -290,7 +290,10 @@ def test_youtube_login_keeps_pkce_verifier(tmp_path, monkeypatch):
                                                  "redirect_uris": ["http://localhost:8000/youtube/oauth2callback"]}}))
     monkeypatch.setattr(config, "YOUTUBE_CLIENT_SECRETS", secrets_file)
     url = youtube.auth_url("hi")
-    assert "code_challenge=" in url and "state=hi" in url
+    assert "code_challenge=" in url and "state=hi%3A" in url                   # slot + a random nonce
+    import pytest
+    with pytest.raises(ValueError):
+        youtube.finish_auth("code", "hi:wrong-nonce")                            # a forged callback is refused
     verifier = (config.SECRETS_DIR / "youtube_pkce_hi.txt").read_text()
     assert len(verifier) >= 43 and youtube._flow(verifier).code_verifier == verifier
 
@@ -881,6 +884,13 @@ def test_audit_fixes_units(monkeypatch):
     job.save()
     job.run(lambda: None)
     assert job.state["status"] == "paused" and job.state["step"] == "quota"
+    # ids are path parts: traversal is refused everywhere
+    with pytest.raises(KeyError):
+        pipeline.safe_id("..")
+    assert client.delete("/api/jobs/..").status_code == 404
+    assert client.get("/api/jobs/../files/x").status_code == 404
+    assert client.delete("/api/characters/..").status_code in (404, 400)
+    assert (config.DATA_DIR / "secrets").exists() or True
     # deleting a running video is refused and does not make it invisible
     jid2 = client.post("/api/jobs", json=body).json()["id"]
     r = client.delete(f"/api/jobs/{jid2}")

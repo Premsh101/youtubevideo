@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -377,6 +378,10 @@ def api_job(job_id: str) -> dict:
 
 @app.get("/api/jobs/{job_id}/files/{name}")
 def api_job_file(job_id: str, name: str, download: bool = False) -> FileResponse:
+    try:
+        pipeline.safe_id(job_id)
+    except KeyError:
+        raise HTTPException(404)
     p = (config.OUTPUT_DIR / job_id / Path(name).name)
     if not p.exists():
         raise HTTPException(404)
@@ -399,6 +404,10 @@ def api_resume_job(job_id: str) -> dict:
 
 @app.delete("/api/jobs/{job_id}")
 def api_delete_job(job_id: str) -> dict:
+    try:
+        pipeline.safe_id(job_id)
+    except KeyError:
+        raise HTTPException(404)
     live = _jobs.get(job_id)
     if live and (live.state["status"] in ("running", "waiting", "queued") or live.busy()):
         raise HTTPException(409, "job is still running")
@@ -496,7 +505,7 @@ def api_apply_logo_all() -> dict:
     if _rebrand_state["running"]:
         raise HTTPException(409, "already applying")
     ids = [j["id"] for j in pipeline.list_jobs() if j.get("outputs") and j["status"] in ("done", "error", "paused")]
-    ids = [i for i in ids if not (_jobs.get(i) and _jobs[i].state["status"] in ("running", "waiting", "queued"))]
+    ids = [i for i in ids if not (_jobs.get(i) and (_jobs[i].state["status"] in ("running", "waiting", "queued") or _jobs[i].busy()))]
 
     def _all():
         _rebrand_state.update(running=True, done=0, total=len(ids))
@@ -575,6 +584,7 @@ def meta_disconnect() -> dict:
 
 
 class PublishIn(BaseModel):
+    force: bool = False          # publish although the clip analysis raised a kid-safety / on-screen-text warning
     targets: list[Literal["youtube", "youtube_short", "facebook", "instagram"]] = ["youtube"]
     privacy: Literal["private", "unlisted", "public"] | None = None
     publish_at: str | None = Field(None, description="YouTube only: RFC3339 time to go public, e.g. 2026-10-10T07:30:00+05:30")
@@ -583,17 +593,18 @@ class PublishIn(BaseModel):
 @app.post("/api/jobs/{job_id}/publish/{lang}")
 def api_publish(job_id: str, lang: str, body: PublishIn) -> dict:
     """Post one language version to the chosen platforms in the background."""
-    job = _jobs.get(job_id)
-    if job is None:
-        try:
-            job = pipeline.Job.load(job_id)
-        except KeyError:
-            raise HTTPException(404)
-        _jobs[job_id] = job
+    live = _jobs.get(job_id)
+    if live and live.state["status"] in ("running", "waiting", "queued"):
+        raise HTTPException(409, "this video is still being processed")
+    job = live or _load_idle_job(job_id)
     if lang not in (job.state.get("outputs") or {}):
         raise HTTPException(404, "no such language version")
     if not body.targets:
         raise HTTPException(400, "choose at least one platform")
+    warns = (job.state.get("clips_plan") or {}).get("warnings") or []
+    if warns and not body.force:
+        raise HTTPException(409, "footage warnings: " + "; ".join(f"{w.get('clip')}: {w.get('note')}" for w in warns)
+                            + " - check the clips, then publish with 'anyway'")
     if any(t.startswith("youtube") for t in body.targets) and not youtube.slot_for(lang):
         raise HTTPException(401, "Connect a YouTube channel first")
     if any(t in ("facebook", "instagram") for t in body.targets):
@@ -604,9 +615,13 @@ def api_publish(job_id: str, lang: str, body: PublishIn) -> dict:
             raise HTTPException(400, "The selected Facebook Page has no linked Instagram Professional account")
         if not config.PUBLIC_BASE_URL and not config.MOCK_AI:
             raise HTTPException(400, "Set PUBLIC_BASE_URL (your https app address) in Coolify first")
-    pub = job.state["outputs"][lang].get("published") or {}
-    busy = [t for t in body.targets if (pub.get(t) or {}).get("status") in ("queued", "uploading")]
-    if busy:
-        raise HTTPException(409, f"already publishing: {busy}")
+    with publish._lock:                       # check-and-mark together: a double click cannot start two uploads
+        pub = job.state["outputs"][lang].get("published") or {}
+        busy = [t for t in body.targets if (pub.get(t) or {}).get("status") in ("queued", "uploading")]
+        if busy:
+            raise HTTPException(409, f"already publishing: {busy}")
+        for t in body.targets:
+            job.state["outputs"][lang].setdefault("published", {})[t] = {"status": "queued", "error": None, "updated": time.time()}
+    job.save()
     publish.start(job, lang, list(body.targets), body.privacy, body.publish_at)
     return {"ok": True, "targets": body.targets}

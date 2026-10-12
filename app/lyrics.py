@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from . import languages, retry
+from . import languages, moods, retry
 from .costs import CostLedger
 from .gemini_client import generate_json
 
@@ -34,6 +34,7 @@ _HINGLISH = {"ki", "ka", "ke", "ko", "se", "mein", "pe", "hai", "hain", "tha", "
              "chhoti", "nanha", "nanhi", "pyara", "pyari", "sundar", "aasman", "tara", "sooraj", "suraj", "chand",
              "baarish", "barish", "gaana", "geet", "kavita", "bachche", "bachcha", "khel", "khelo", "sona", "neend",
              "lori", "raat", "subah", "udi", "udta", "chala", "chali", "aaya", "aayi", "mama", "dada", "din"}
+_MARATHI = {"आहे", "आहेत", "आणि", "मी", "तू", "नाही", "माझा", "माझी", "माझे", "तुझा", "तुझी", "होता", "होती", "आपण", "किती", "कुठे"}
 # other Latin-script languages we support: a few very common words each (a pasted German poem is German, not English)
 _LATIN_STOP = {"de": {"und", "ist", "die", "der", "das", "ich", "nicht", "alle", "meine", "ein", "eine", "auf", "mit", "sind", "wir", "du"},
                "fr": {"le", "la", "les", "et", "est", "un", "une", "dans", "je", "vous", "frère", "mon", "ma", "sur", "nous"},
@@ -76,6 +77,8 @@ def detect_language(text: str) -> str | None:
     if not counts:
         return None
     best = max(counts, key=counts.get)
+    if best == "hi" and sum(w in _MARATHI for w in re.findall(r"[\u0900-\u097F]+", text)) >= 2:
+        return "mr"                                   # Marathi shares the script; its own common words give it away
     if best != "en":
         return best
     if hinglish(text):
@@ -340,7 +343,7 @@ twice (except a repeated chorus). Choose the two end words first, then write the
 
 
 HINDI_RULES = """Hindi rules (हिंदी बाल-गीत): write the way Hindi children's rhymes are REALLY sung, not translated: short lines
-of 12-16 मात्राएँ with a bouncing beat, everyday words a 2-year-old hears at home (मम्मी, पापा, गाय, चिड़िया, रोटी, पानी,
+of 12-16 मात्राएँ with a clear beat that fits the video's mood (soft and slow for a lullaby), everyday words a 2-year-old hears at home (मम्मी, पापा, गाय, चिड़िया, रोटी, पानी,
 गोल, छोटा, प्यारा), repetition and sounds (छम छम, टप टप, म्याऊँ, भौं भौं). तुकबंदी: the LAST WORD of both lines of a
 couplet must end in the same sound - same final vowel-matra together with its consonant (रानी / पानी, तारा / प्यारा,
 शान / आसमान, चले / मिले, दूर के / बूर के). Ending both lines with the same helper word (है, में, के, था) is NOT a rhyme by
@@ -360,7 +363,8 @@ def _storyboard(scenes: list[dict], key: str) -> str:
                      f'   (on screen: {str(s.get("visual", ""))[:90]})' for i, s in enumerate(scenes))
 
 
-def _write_prompt(scenes: list[dict], lang: str, meaning_key: str, draft: list[str] | None, keep_draft: bool) -> str:
+def _write_prompt(scenes: list[dict], lang: str, meaning_key: str, draft: list[str] | None, keep_draft: bool,
+                  tone: str = "happy, bouncy and playful") -> str:
     name = languages.name(lang)
     n = len(scenes)
     pairs = ", ".join(f"({a + 1},{b + 1})" for a, b in couplets(n))
@@ -389,7 +393,7 @@ the picture's detail slightly. Do NOT translate word for word; write what a nati
 {language_rules(lang)}
 - A [CHORUS] line must be word-for-word identical every time it appears.
 - Rhythm: each line has about the same number of syllables as its meaning line in English (within 2), 4-9 words,
-  simple words a toddler knows, easy to sing, happy tone. Native script only.
+  simple words a toddler knows, easy to sing. Tone of the whole song: {tone}. Native script only.
 For every line also give the rhyming part of the line's ending: "end_word" = the last word, and "end_sound" = the
 sounds from the last stressed vowel to the end of that word, spelled in simple Latin letters as pronounced
 (e.g. तारा -> "ara", प्यारा -> "ara", आसमान -> "aan", star -> "ar").
@@ -406,7 +410,7 @@ def end_word(text: str) -> str:
 
 
 def _repair_prompt(scenes: list[dict], lang: str, meaning_key: str, texts: list[str], sounds: list[str],
-                   fixes: list[tuple[int, int]]) -> tuple[str, list[int]]:
+                   fixes: list[tuple[int, int]], tone: str = "happy, bouncy and playful") -> tuple[str, list[int]]:
     name = languages.name(lang)
     song = "\n".join(f"{i + 1}. {t}   (ends -{sounds[i]})" for i, t in enumerate(texts))
     todo, rewrite, root = [], [], {}
@@ -427,7 +431,7 @@ def _repair_prompt(scenes: list[dict], lang: str, meaning_key: str, texts: list[
                     f'{ending} (word: {w}). Meaning to keep: "{src}"')
     prompt = f"""REPAIR. Song in {name} for toddlers. These couplets do NOT rhyme yet: the two lines of a couplet must END with
 words that rhyme (same final sound). Rewrite ONLY the lines marked REWRITE, so that their last word rhymes with the
-partner line; keep the meaning, 4-9 simple words, about the same rhythm. Do not change any other line.
+partner line; keep the meaning, 4-9 simple words, about the same rhythm, tone: {tone}. Do not change any other line.
 {language_rules(lang)}
 
 The song now:
@@ -510,6 +514,7 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
     key = f"line_{lang}"
     src, authoritative = source_language(params)
     report_store = script.setdefault("rhyme", {})
+    tone = moods.get(params.get("mood") if params.get("mood") in moods.MOODS else script.get("mood"))["lyrics"]
     if authoritative and lang == src and not all(s.get(key) for s in scenes):
         # a poem in a language other than EN/HI: the script only carries EN+HI, so lay the owner's own lines over
         # the scenes first (one cheap call) instead of rewriting their poem from the English translation
@@ -527,8 +532,8 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
     keep_draft = bool(draft) and lang == src
     try:
         ok_shape = lambda d: len(d.get("lines") or []) == n and all(isinstance(x, dict) and x.get("text") for x in d["lines"])
-        data = generate_json(_write_prompt(scenes, lang, meaning_key, draft, keep_draft), ledger, f"rhyming lyrics {lang}",
-                             validate=ok_shape)
+        data = generate_json(_write_prompt(scenes, lang, meaning_key, draft, keep_draft, tone), ledger,
+                             f"rhyming lyrics {lang}", validate=ok_shape)
         lines = data["lines"]
     except retry.QuotaExhausted:
         raise                                        # pause the job; never ship a plain translation because of quota
@@ -590,7 +595,7 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
     tries = 0
     while bad and tries < MAX_REPAIRS:
         tries += 1
-        prompt, rewrite = _repair_prompt(scenes, lang, meaning_key, texts, sounds, bad)
+        prompt, rewrite = _repair_prompt(scenes, lang, meaning_key, texts, sounds, bad, tone)
         if not rewrite:
             break
         try:

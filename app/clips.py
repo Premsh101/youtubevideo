@@ -137,6 +137,7 @@ moments in time order), "has_text_or_logo": true or false, "kid_safe": true or f
     data = generate_json(prompt, ledger, f"watch clip {m['name']}", media=[proxy(cid)])
     data["moments"] = [x for x in (data.get("moments") or []) if isinstance(x, dict) and "t" in x][:8]
     f.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    (_dir(cid) / "proxy.mp4").unlink(missing_ok=True)      # only needed for the analysis, which is now cached
     return data
 
 

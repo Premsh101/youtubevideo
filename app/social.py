@@ -11,6 +11,7 @@ Meta downloads the video from our server, so PUBLIC_BASE_URL must be the app's h
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
 import urllib.parse
@@ -38,6 +39,10 @@ def _load() -> dict:
 
 def _save(data: dict) -> None:
     STORE.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    try:
+        os.chmod(STORE, 0o600)
+    except OSError:
+        pass
 
 
 def status() -> dict:

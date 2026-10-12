@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 import subprocess
@@ -37,6 +38,10 @@ class Job:
         }
         if existing:  # resuming: keep what earlier attempts spent in the total
             self.params = self.state["params"]
+            for o in (self.state.get("outputs") or {}).values():      # no upload thread survives a restart
+                for t, rec in (o.get("published") or {}).items():
+                    if isinstance(rec, dict) and rec.get("status") in ("queued", "uploading"):
+                        rec["status"], rec["error"] = "error", "interrupted by a restart - publish again"
             prev = (existing.get("cost") or {}).get("total_inr", 0.0)
             self.state["spent_before_inr"] = existing.get("spent_before_inr", 0.0) + prev
         self._busy = 0            # publishing or another free operation in progress (not a pipeline run)
@@ -98,6 +103,7 @@ class Job:
             try:
                 self.state["status"] = "running"
                 self.state["error"] = None
+                self.state["last_error"] = None
                 target()
                 if free and prev_status in ("paused", "error"):   # a free fix-up must not hide an unfinished video
                     self.state["status"], self.state["step"], self.state["progress"] = prev_status, prev_step, prev_progress
@@ -105,6 +111,8 @@ class Job:
                     return
                 self.state["status"] = "done"
                 self.step("done", 1.0)
+                if not free:
+                    prune_cache()
                 return
             except retry.QuotaExhausted as exc:
                 if pause_idx >= len(self.PAUSE_SCHEDULE):
@@ -120,6 +128,12 @@ class Job:
                           f"(nothing already generated is lost)", self.state["progress"])
                 time.sleep(wait)
             except Exception as exc:  # surfaced to the UI
+                if free and self.state.get("outputs"):
+                    # a failed add-language / re-voice / fix-up must not hide the finished video or invite a full re-run
+                    self.state["status"], self.state["step"], self.state["progress"] = prev_status, prev_step, prev_progress
+                    self.state["last_error"] = f"{exc}"[:600]
+                    self.save()
+                    return
                 self.state["status"] = "error"
                 self.state["error"] = f"{exc}\n{traceback.format_exc()[-1500:]}"
                 self.save()
@@ -162,7 +176,7 @@ class Job:
         # 2. poem + scene plan (EN + HI in one call)
         self.step("Writing the rhyme and scene plan with Gemini", 0.08)
         script = self.state.get("script") or script_gen.generate_script(p.get("topic"), p.get("poem"), chars, mode, engine,
-                                            int(p.get("target_seconds") or config.TARGET_SECONDS), self.ledger, p.get("mood"))
+                                            int(p.get("target_seconds") or config.TARGET_SECONDS), self.ledger, p.get("mood"), self.id)
         self.state["script"] = script
         scenes = script["scenes"]
         for lang in langs:  # en + hi come with the script; any other language is adapted by Gemini
@@ -340,7 +354,7 @@ class Job:
             self.save()
         plan = self.state["clips_plan"]
         self.step("Writing lyrics that fit your footage", 0.25)
-        script = self.state.get("script") or script_gen.generate_clip_script(plan["segments"], p.get("topic"), p.get("poem"), self.ledger, p.get("mood"))
+        script = self.state.get("script") or script_gen.generate_clip_script(plan["segments"], p.get("topic"), p.get("poem"), self.ledger, p.get("mood"), self.id)
         self.state["script"] = script
         self.save()
         for lang in langs:
@@ -488,6 +502,7 @@ class Job:
                                        music_db=md["volume_db"], harmony=md["id"] not in ("sleepy", "calm"))
         final = render.mux(silent, audio, self.dir / f"final_{lang}{tag}.mp4")
         silent.unlink(missing_ok=True)
+        audio.unlink(missing_ok=True)          # ~10 MB/min of WAV that the MP4 already carries
         # captions at the moment each line is really heard: sung lines from the song (scene 0 may sit after an intro)
         srt = (render.write_srt(voices, line_t, self.dir / f"captions_{lang}{tag}.srt", 0.0) if song is not None
                else render.write_srt(voices, starts, self.dir / f"captions_{lang}{tag}.srt", lead))
@@ -736,12 +751,38 @@ class Job:
                     extra.unlink(missing_ok=True)
 
 
+def prune_cache(max_gb: float | None = None) -> int:
+    """Keep the asset cache under CACHE_MAX_GB (default 25): oldest files go first, nothing newer than a day.
+    Every asset is content-addressed, so a pruned one is simply paid for again if ever needed."""
+    cap = (max_gb if max_gb is not None else float(os.getenv("CACHE_MAX_GB", "25"))) * 1024 ** 3
+    files = [(p.stat().st_mtime, p.stat().st_size, p) for p in config.CACHE_DIR.rglob("*") if p.is_file()]
+    total = sum(sz for _, sz, _ in files)
+    removed = 0
+    for mtime, sz, p in sorted(files):
+        if total <= cap or time.time() - mtime < 86400:
+            break
+        p.unlink(missing_ok=True)
+        total -= sz
+        removed += 1
+    return removed
+
+
+_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def safe_id(job_id: str) -> str:
+    """Ids are path parts: anything else ("..", "/", ".") must never reach the file system."""
+    if not isinstance(job_id, str) or not _ID_RE.match(job_id):
+        raise KeyError(job_id)
+    return job_id
+
+
 def delete_job(job_id: str) -> None:
-    shutil.rmtree(config.OUTPUT_DIR / job_id, ignore_errors=True)
+    shutil.rmtree(config.OUTPUT_DIR / safe_id(job_id), ignore_errors=True)
 
 
 def load_job(job_id: str) -> dict | None:
-    f = config.OUTPUT_DIR / job_id / "job.json"
+    f = config.OUTPUT_DIR / safe_id(job_id) / "job.json"
     return json.loads(f.read_text()) if f.exists() else None
 
 

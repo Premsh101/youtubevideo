@@ -60,9 +60,9 @@ MOODS: dict[str, dict] = {
     },
 }
 
-_SLEEPY = re.compile(r"\b(sleep\w*|lullaby|lullabies|bed\s?time|bedtime|good\s?night|night\s?night|nap\w*|dream\w*|moon\w*|"
-                     r"twinkle|rock[- ]a[- ]bye|hush|cradle)\b", re.I)
-_CALM = re.compile(r"\b(calm|gentle|rain|nature|garden|butterfl\w*|story|peace\w*|relax\w*|bath|breath\w*)\b", re.I)
+_SLEEPY = re.compile(r"\b(sleep\w*|lullaby|lullabies|lori|bed\s?time|bedtime|good\s?night|night\s?night|nap|naps|naptime|"
+                     r"sweet dreams|twinkle|rock[- ]a[- ]bye|hush|cradle|सोना|सो जाओ|लोरी|नींद)\b", re.I)
+_CALM = re.compile(r"\b(calm|gentle|soft|quiet|rain|nature|garden|butterfl\w*|peace\w*|relax\w*|breath\w*)\b", re.I)
 _LIVELY = re.compile(r"\b(dance|jump|party|hop|clap|stomp|march|run|race|wheels|bus|train|disco)\b", re.I)
 
 

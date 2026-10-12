@@ -83,6 +83,7 @@ def _ass(text: str, lang: str, align: int, outline_bgr: str, out: Path) -> Path:
     font = lyrics_overlay.FONTS.get(lang, lyrics_overlay.DEFAULT_FONT)
     n = len(text)
     size = 158 if n <= 12 else 138 if n <= 20 else 120 if n <= 30 else 104   # long titles wrap to two lines
+    size = max(72, min(size, int(2 * 1140 / (0.62 * max(n, 1)))))         # never more than two lines across 1140 px
     safe = text.replace("\\", "").replace("{", "(").replace("}", ")")
     out.write_text(f"""[Script Info]
 ScriptType: v4.00+

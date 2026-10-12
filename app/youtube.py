@@ -11,6 +11,9 @@ Videos are always declared "made for kids" (COPPA).
 from __future__ import annotations
 
 import json
+import secrets
+import re
+import os
 from pathlib import Path
 
 from . import config
@@ -72,19 +75,41 @@ def auth_url(slot: str = DEFAULT_SLOT) -> str:
     """Google sign-in URL. The PKCE verifier the library generates must survive until the callback
     (a new Flow object there would not know it → 'Missing code verifier'), so it is kept on disk."""
     flow = _flow()
+    slot = _safe_slot(slot)
+    nonce = secrets.token_urlsafe(16)
     url, state = flow.authorization_url(access_type="offline", prompt="consent select_account",
-                                        include_granted_scopes="true", state=f"{slot}")
-    (config.SECRETS_DIR / f"youtube_pkce_{slot}.txt").write_text(flow.code_verifier or "")
+                                        include_granted_scopes="true", state=f"{slot}:{nonce}")
+    _write_secret(config.SECRETS_DIR / f"youtube_pkce_{slot}.txt", flow.code_verifier or "")
+    _write_secret(config.SECRETS_DIR / f"youtube_state_{slot}.txt", nonce)
     return url
 
 
+def _safe_slot(slot: str) -> str:
+    if not re.match(r"^[a-z]{2,3}$|^default$", slot or ""):
+        raise ValueError("bad channel slot")
+    return slot
+
+
+def _write_secret(path, text: str) -> None:
+    path.write_text(text)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def finish_auth(code: str, state: str | None) -> str:
-    slot = (state or DEFAULT_SLOT).strip() or DEFAULT_SLOT
+    slot, _, nonce = (state or "").partition(":")
+    slot = _safe_slot(slot or DEFAULT_SLOT)
+    state_file = config.SECRETS_DIR / f"youtube_state_{slot}.txt"
+    if not nonce or not state_file.exists() or not secrets.compare_digest(nonce, state_file.read_text().strip()):
+        raise ValueError("sign-in state does not match (start the YouTube connection again)")
+    state_file.unlink(missing_ok=True)
     pkce = config.SECRETS_DIR / f"youtube_pkce_{slot}.txt"
     flow = _flow(pkce.read_text() if pkce.exists() else None)
     flow.fetch_token(code=code)
     pkce.unlink(missing_ok=True)
-    _token_path(slot).write_text(flow.credentials.to_json())
+    _write_secret(_token_path(slot), flow.credentials.to_json())
     try:
         from googleapiclient.discovery import build
         yt = build("youtube", "v3", credentials=flow.credentials, cache_discovery=False)
@@ -103,7 +128,7 @@ def _service(slot: str):
     creds = Credentials.from_authorized_user_info(json.loads(path.read_text()), SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        path.write_text(creds.to_json())
+        _write_secret(path, creds.to_json())
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
 
@@ -139,7 +164,7 @@ def upload(video: Path, title: str, description: str, tags: list[str], lang: str
     req = yt.videos().insert(part="snippet,status", body=body, media_body=media)
     resp = None
     while resp is None:
-        _status, resp = req.next_chunk()
+        _status, resp = req.next_chunk(num_retries=5)     # 5xx / network blips resume from the last byte
     vid = resp["id"]
     if thumbnail and thumbnail.exists() and not short:
         try:

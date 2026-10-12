@@ -24,6 +24,8 @@ def _slug(name: str) -> str:
 
 
 def _path(cid: str) -> Path:
+    if not isinstance(cid, str) or not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", cid):
+        raise KeyError(f"unknown character {cid}")
     return config.CHARACTER_DIR / cid
 
 

@@ -59,7 +59,12 @@ def describe(c: dict) -> str:
 
 
 def save(c: dict) -> dict:
-    cid = c.get("id") or _slug(c["name"])
+    cid = c.get("id")
+    if not cid:
+        base = _slug(c["name"])
+        cid, n = base, 2
+        while _path(cid).exists():       # a second "Bunny" gets bunny-2, not the first Bunny's sheet
+            cid, n = f"{base}-{n}", n + 1
     c["id"] = cid
     d = _path(cid)
     d.mkdir(parents=True, exist_ok=True)

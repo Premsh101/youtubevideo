@@ -480,6 +480,19 @@ def source_poem(params: dict) -> str:
     return (params.get("poem") or "").strip()
 
 
+def _from_poem(poem: str, lines: list[str]) -> bool:
+    """Do these lines really use the owner's words? (most of each line's words appear in the poem)"""
+    bag = set(re.findall(r"[\w\u0900-\u0DFF]+", (poem or "").lower()))
+    if not bag:
+        return True
+    ok = 0
+    for line in lines:
+        toks = re.findall(r"[\w\u0900-\u0DFF]+", (line or "").lower())
+        if toks and sum(t in bag for t in toks) / len(toks) >= 0.7:
+            ok += 1
+    return ok >= 0.8 * max(1, len(lines))
+
+
 def _split_poem(poem: str, scenes: list[dict], lang: str, ledger: CostLedger) -> list[str] | None:
     """Lay the owner's own poem (any language) over the scenes, one line each, keeping its words."""
     n = len(scenes)
@@ -515,6 +528,11 @@ def ensure_rhyming(script: dict, lang: str, params: dict, ledger: CostLedger) ->
     src, authoritative = source_language(params)
     report_store = script.setdefault("rhyme", {})
     tone = moods.get(params.get("mood") if params.get("mood") in moods.MOODS else script.get("mood"))["lyrics"]
+    if authoritative and lang == src and all(s.get(key) for s in scenes) and not _from_poem(source_poem(params), [s[key] for s in scenes]):
+        lines = _split_poem(source_poem(params), scenes, lang, ledger)       # Gemini "smoothed" the owner's words: lay the real ones
+        if lines:
+            for s, text in zip(scenes, lines):
+                s[key] = text
     if authoritative and lang == src and not all(s.get(key) for s in scenes):
         # a poem in a language other than EN/HI: the script only carries EN+HI, so lay the owner's own lines over
         # the scenes first (one cheap call) instead of rewriting their poem from the English translation

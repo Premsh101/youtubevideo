@@ -83,6 +83,10 @@ def generate_json(prompt: str, ledger: CostLedger, detail: str, cache: bool = Tr
         ))
         usage = resp.usage_metadata
         ledger.text(detail, usage.prompt_token_count or 0, usage.candidates_token_count or 0)
+        if resp.text is None:
+            why = getattr(getattr(resp, "prompt_feedback", None), "block_reason", None) or \
+                  (resp.candidates[0].finish_reason if getattr(resp, "candidates", None) else "empty")
+            raise RuntimeError(f"Gemini gave no answer for {detail} (reason: {why}); try different wording")
         data = _parse_json(resp.text)
     if validate is not None and not validate(data):     # never cache a wrong answer: a retry must be able to differ
         raise RuntimeError(f"Gemini returned an unusable answer for {detail}; please retry")
@@ -191,10 +195,8 @@ def generate_video_clip(prompt: str, first_frame: Path, last_frame: Path | None,
         raise RuntimeError(f"Veo failed: {op.error}")
     vid = op.response.generated_videos[0].video
     data = vid.video_bytes
-    if data is None and getattr(vid, "uri", None):
-        data = client().files.download(file=vid)
-    if not data:
-        raise RuntimeError("Veo returned no video bytes (set no output_gcs_uri so bytes are inlined)")
+    if not data:   # Vertex inlines the bytes when no output_gcs_uri is set; files.download() is Developer-API only
+        raise RuntimeError(f"Veo returned no video bytes (uri={getattr(vid, 'uri', None)}); leave output_gcs_uri unset")
     out.write_bytes(data)
     ledger.veo(detail, config.VEO_CLIP_SECONDS)
     return out

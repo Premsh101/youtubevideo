@@ -23,9 +23,15 @@ def _valid(starts: list[float], total: float, n: int) -> bool:
     return all(b - a >= 0.5 for a, b in zip(starts, starts[1:]))
 
 
-def _elevenlabs(song: bytes, lines: list[str], ledger: CostLedger | None = None, total: float = 0.0) -> list[float] | None:
+# languages ElevenLabs forced alignment supports (others go straight to the Gemini listener)
+_FA_LANGS = {"en", "hi", "ta", "ar", "ja", "id", "de", "fr", "es", "pt", "it", "nl", "pl", "tr", "ru", "ko", "zh", "sv", "fi",
+             "da", "no", "cs", "el", "hu", "ro", "sk", "uk", "bg", "hr", "ms", "fil", "vi"}
+
+
+def _elevenlabs(song: bytes, lines: list[str], ledger: CostLedger | None = None, total: float = 0.0,
+                lang: str = "en") -> list[float] | None:
     key = os.getenv("ELEVENLABS_API_KEY")
-    if not key:
+    if not key or lang not in _FA_LANGS:
         return None
     text = " ".join(lines)
 
@@ -44,7 +50,15 @@ def _elevenlabs(song: bytes, lines: list[str], ledger: CostLedger | None = None,
         return None
     if ledger is not None:
         ledger.stt("forced alignment", total / 60)
-    chars = r.json().get("characters") or []
+    data = r.json()
+    words = [w for w in (data.get("words") or []) if w.get("text", "").strip() and w.get("start") is not None]
+    if words:                                   # one entry per word: count the words of each line
+        starts, offset = [], 0
+        for line in lines:
+            starts.append(float(words[min(offset, len(words) - 1)]["start"]))
+            offset += len(line.split())
+        return starts
+    chars = data.get("characters") or []
     if len(chars) < len(text) - 2:
         return None
     starts, offset = [], 0
@@ -72,7 +86,8 @@ def _gemini(song: bytes, lines: list[str], ledger: CostLedger) -> list[float] | 
     return [float(x) for x in _parse_json(resp.text).get("line_starts", [])]
 
 
-def line_starts(song_path, lines: list[str], total: float, planned: list[float], ledger: CostLedger) -> tuple[list[float], str]:
+def line_starts(song_path, lines: list[str], total: float, planned: list[float], ledger: CostLedger,
+                lang: str = "en") -> tuple[list[float], str]:
     """Return (start time of each line in the song, method used)."""
     cache = song_path.with_suffix(".align.json")
     if cache.exists():
@@ -84,7 +99,7 @@ def line_starts(song_path, lines: list[str], total: float, planned: list[float],
     else:
         song = song_path.read_bytes()
         starts, method = None, "plan"
-        for name, fn in (("elevenlabs", lambda: _elevenlabs(song, lines, ledger, total)), ("gemini", lambda: _gemini(song, lines, ledger))):
+        for name, fn in (("elevenlabs", lambda: _elevenlabs(song, lines, ledger, total, lang)), ("gemini", lambda: _gemini(song, lines, ledger))):
             try:
                 cand = fn()
             except retry.QuotaExhausted:

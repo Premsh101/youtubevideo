@@ -97,7 +97,7 @@ def compose(scenes: list[dict], durations: list[float], lang: str, mode: str, le
         with httpx.Client(timeout=600) as http:
             r = http.post(f"{API}/v1/music", params={"output_format": "mp3_44100_128"},
                           headers={"xi-api-key": api_key, "Content-Type": "application/json"},
-                          json={"model_id": MODEL, "composition_plan": plan, "respect_sections_durations": True})
+                          json={"model_id": MODEL, "composition_plan": plan})
         if r.status_code >= 400:
             err = RuntimeError(f"ElevenLabs music error {r.status_code}: {r.text[:500]}")
             err.status_code = r.status_code  # lets retry.py recognise 429/503

@@ -1,6 +1,7 @@
 """FastAPI app: web UI + JSON API for generating and publishing toddler rhyme videos."""
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
@@ -47,8 +48,51 @@ class BasicAuth(BaseHTTPMiddleware):
 
 
 app.add_middleware(BasicAuth)
+
+
+class BodyLimit(BaseHTTPMiddleware):
+    """Refuse oversized uploads from the Content-Length alone, before the body is read into the container."""
+    LIMITS = {"/api/clips": clips.MAX_BYTES + 2 * 1024 * 1024, "/api/branding/clip/": 202 * 1024 * 1024,
+              "/api/branding/logo": 16 * 1024 * 1024}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "POST":
+            n = request.headers.get("content-length")
+            for prefix, cap in self.LIMITS.items():
+                if n and n.isdigit() and request.url.path.startswith(prefix) and int(n) > cap:
+                    return Response(f'{{"detail":"That file is too large (max {cap // (1024 * 1024)} MB)"}}', 413,
+                                    media_type="application/json")
+        return await call_next(request)
+
+
+app.add_middleware(BodyLimit)
 STATIC = Path(__file__).parent / "static"
 _jobs: dict[str, pipeline.Job] = {}
+_char_busy: dict[str, dict] = {}
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("studio")
+
+
+def _reconcile_interrupted() -> int:
+    """After a restart no render thread survives: a job still marked running/waiting/queued on disk is interrupted.
+    Mark it so the owner sees an error with a Resume button instead of a progress bar that never moves."""
+    n = 0
+    for row in pipeline.list_jobs():
+        if row.get("status") in ("running", "waiting", "queued") and row["id"] not in _jobs:
+            try:
+                job = pipeline.Job.load(row["id"])
+            except KeyError:
+                continue
+            job.state["status"] = "error"
+            job.state["error"] = "Interrupted by a server restart or redeploy. Nothing already generated is lost: press Resume."
+            job.save()
+            n += 1
+    if n:
+        log.info("marked %d interrupted job(s) after restart", n)
+    return n
+
+
+_reconcile_interrupted()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -84,18 +128,47 @@ def api_characters() -> list[dict]:
         c["sheet_url"] = f"/api/characters/{c['id']}/sheet.png" if c["has_sheet"] else None
         sp = next(iter(sorted((config.CHARACTER_DIR / c["id"]).glob("sprite_*.png"))), None)
         c["sprite_url"] = f"/api/characters/{c['id']}/sprite.png" if sp else None
+        b = _char_busy.get(c["id"]) or {}
+        c["busy"], c["busy_error"] = bool(b.get("running")), b.get("error")
     return out
 
 
+def _char_background(cid: str, fn, wait: bool) -> dict:
+    """Gemini drawing takes minutes (quota pacing, retries): run it off the request so the browser/proxy never
+    times out; the character list shows `busy` until it is done. `wait=true` runs inline (tests, scripts)."""
+    try:
+        characters.get(cid)
+    except KeyError:
+        raise HTTPException(404)
+    if _char_busy.get(cid, {}).get("running"):
+        raise HTTPException(409, "still drawing this character")
+    if wait:
+        led = fn()
+        return {"ok": True, "pending": False, "cost": led.summary() if led is not None else None}
+    _char_busy[cid] = {"running": True, "error": None}
+
+    def go():
+        try:
+            fn()
+            _char_busy[cid] = {"running": False, "error": None}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("character %s drawing failed", cid)
+            _char_busy[cid] = {"running": False, "error": str(exc)[:300]}
+    threading.Thread(target=go, daemon=True, name=f"char-{cid}").start()
+    return {"ok": True, "pending": True}
+
+
 @app.post("/api/characters/{cid}/sheet")
-def api_character_sheet(cid: str, mode: Literal["2d", "3d"] = "2d", regenerate: bool = False) -> dict:
-    ledger = CostLedger()
-    if regenerate:
-        p = characters.sheet_path(cid)
-        if p:
-            p.unlink()
-    characters.ensure_sheet(cid, mode, ledger)
-    return {"sheet_url": f"/api/characters/{cid}/sheet.png", "cost": ledger.summary()}
+def api_character_sheet(cid: str, mode: Literal["2d", "3d"] = "2d", regenerate: bool = False, wait: bool = False) -> dict:
+    def fn():
+        if regenerate:
+            p = characters.sheet_path(cid)
+            if p:
+                p.unlink()
+        ledger = CostLedger()
+        characters.ensure_sheet(cid, mode, ledger)
+        return ledger
+    return _char_background(cid, fn, wait) | {"sheet_url": f"/api/characters/{cid}/sheet.png"}
 
 
 @app.get("/api/characters/{cid}/sheet.png")
@@ -115,16 +188,14 @@ def api_character_sprite_png(cid: str) -> FileResponse:
 
 
 @app.post("/api/characters/{cid}/sprite")
-def api_character_sprite(cid: str, mode: Literal["2d", "3d"] = "3d", regenerate: bool = False) -> dict:
+def api_character_sprite(cid: str, mode: Literal["2d", "3d"] = "3d", regenerate: bool = False, wait: bool = False) -> dict:
     """The character's animated cut-out (used by the Animated cut-outs engine). Redo it if the cut looks bad."""
-    ledger = CostLedger()
-    try:
-        characters.get(cid)
-    except KeyError:
-        raise HTTPException(404)
-    characters.ensure_sheet(cid, mode, ledger)
-    cutout.ensure_sprite(cid, mode, ledger, force=regenerate)
-    return {"sprite_url": f"/api/characters/{cid}/sprite.png", "cost": ledger.summary()}
+    def fn():
+        ledger = CostLedger()
+        characters.ensure_sheet(cid, mode, ledger)
+        cutout.ensure_sprite(cid, mode, ledger, force=regenerate)
+        return ledger
+    return _char_background(cid, fn, wait) | {"sprite_url": f"/api/characters/{cid}/sprite.png"}
 
 
 @app.delete("/api/characters/{cid}")
@@ -141,13 +212,7 @@ def api_languages() -> list[dict]:
 @app.post("/api/jobs/{job_id}/lyrics")
 def api_set_lyrics(job_id: str, on: bool = True, lang: str = "all") -> dict:
     """Add (or remove) animated on-screen lyrics on an existing video — any language, old videos too."""
-    live = _jobs.get(job_id)
-    if live and live.state["status"] in ("running", "waiting", "queued"):
-        raise HTTPException(409, "this video is still being processed")
-    try:
-        job = pipeline.Job.load(job_id)
-    except KeyError:
-        raise HTTPException(404)
+    job = _load_idle_job(job_id)
     outs = job.state.get("outputs") or {}
     langs = list(outs) if lang == "all" else [lang]
     if not langs or any(x not in outs for x in langs):
@@ -155,7 +220,6 @@ def api_set_lyrics(job_id: str, on: bool = True, lang: str = "all") -> dict:
     for x in langs:
         if not (job.dir / outs[x]["captions"]).exists():
             raise HTTPException(409, f"captions for {x} are missing; lyrics need their timings")
-    _jobs[job_id] = job
     threading.Thread(target=job.set_lyrics, args=(langs, on), daemon=True, name=f"lyrics-{job_id}").start()
     return {"ok": True, "languages": langs, "on": on}
 
@@ -441,13 +505,24 @@ def api_clip(kind: str) -> FileResponse:
     return FileResponse(p, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 
+async def _read_capped(file: UploadFile, cap: int, message: str) -> bytes:
+    chunks, size = [], 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > cap:
+            raise HTTPException(413, message)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.post("/api/branding/clip/{kind}")
 async def api_upload_clip(kind: str, file: UploadFile = File(...)) -> dict:
     if kind not in branding.CLIP_KINDS:
         raise HTTPException(404)
-    data = await file.read()
-    if len(data) > 200 * 1024 * 1024:
-        raise HTTPException(413, "Clip too large (max 200 MB)")
+    data = await _read_capped(file, 200 * 1024 * 1024, "Clip too large (max 200 MB)")
     tmp = branding.DIR / f"_check_{kind}.mp4"
     tmp.write_bytes(data)
     try:
@@ -473,9 +548,7 @@ def api_remove_clip(kind: str, restore_default: bool = False) -> dict:
 
 @app.post("/api/branding/logo")
 async def api_upload_logo(file: UploadFile = File(...)) -> dict:
-    data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(413, "Logo file is too large (max 15 MB)")
+    data = await _read_capped(file, 15 * 1024 * 1024, "Logo file is too large (max 15 MB)")
     try:
         branding.save_logo(data)
     except Exception as exc:  # noqa: BLE001 - bad image

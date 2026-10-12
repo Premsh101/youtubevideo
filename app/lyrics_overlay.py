@@ -52,9 +52,13 @@ def parse_srt(path: Path) -> list[tuple[float, float, str]]:
     return out
 
 
-def build_ass(cues: list[tuple[float, float, str]], lang: str, out: Path, w: int | None = None, h: int | None = None) -> Path:
+def build_ass(cues: list[tuple[float, float, str]], lang: str, out: Path, w: int | None = None, h: int | None = None,
+              size: int | None = None, margin_v: int | None = None) -> Path:
+    """`size`/`margin_v` override the 16:9 defaults (used for the 9:16 Shorts/Reels frame, where the lyrics sit
+    in the band under the picture at phone-readable size)."""
     w, h = w or config.VIDEO_W, h or config.VIDEO_H
-    size = round(h * 0.085)
+    size = size or round(h * 0.085)
+    margin_v = margin_v if margin_v is not None else branding.lyrics_bottom_margin(w, h)
     font = FONTS.get(lang, DEFAULT_FONT)
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -65,7 +69,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Lyric,{font},{size},{FILL_SUNG},{FILL_BEFORE},&H00FF8F3A,&H64000000,1,0,0,0,100,100,0,0,1,{round(size * 0.13)},{round(size * 0.06)},2,{round(w * 0.06)},{round(w * 0.06)},{branding.lyrics_bottom_margin(w, h)},1
+Style: Lyric,{font},{size},{FILL_SUNG},{FILL_BEFORE},&H00FF8F3A,&H64000000,1,0,0,0,100,100,0,0,1,{round(size * 0.13)},{round(size * 0.06)},2,{round(w * 0.06)},{round(w * 0.06)},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -120,11 +124,11 @@ def finalize(video: Path, captions: Path | None, lang: str, logo: Path | None, o
         chain.append(branding.overlay_filter(w, h, label, "1:v", "lo"))
         label = "lo"
     chain.append(f"[{label}]format=yuv420p[vout]")
-    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
-                    "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "medium", "-crf", "19",
-                    "-c:a", "copy", "-movflags", "+faststart", out.name],
-                   check=True, cwd=video.parent)
+    from .render import run_ff
+    run_ff(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
+            "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+            "-c:a", "copy", "-movflags", "+faststart", out.name], cwd=video.parent)
     return out
 
 

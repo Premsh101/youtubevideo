@@ -84,6 +84,27 @@ def auth_url(slot: str = DEFAULT_SLOT) -> str:
     return url
 
 
+def _clean(text: str) -> str:
+    return (text or "").replace("<", "").replace(">", "")       # YouTube rejects angle brackets
+
+
+def _utf8_cap(text: str, max_bytes: int) -> str:
+    """YouTube's description limit is 5000 BYTES: Devanagari/Tamil are 3 bytes a character."""
+    return text.encode("utf-8")[:max_bytes].decode("utf-8", "ignore")
+
+
+def _tag_cap(tags: list[str], limit: int = 500) -> list[str]:
+    """Total tag budget is 500 characters counting commas and the quotes around multi-word tags."""
+    out, used = [], 0
+    for t in tags[:40]:
+        cost = len(t) + (3 if " " in t else 1)
+        if used + cost > limit:
+            break
+        out.append(t)
+        used += cost
+    return out[:30]
+
+
 def _safe_slot(slot: str) -> str:
     if not re.match(r"^[a-z]{2,3}$|^default$", slot or ""):
         raise ValueError("bad channel slot")
@@ -148,7 +169,7 @@ def upload(video: Path, title: str, description: str, tags: list[str], lang: str
     if publish_at:  # scheduled publishing: YouTube requires private + publishAt
         status.update(privacyStatus="private", publishAt=publish_at)
     body = {
-        "snippet": {"title": title[:100], "description": description[:4900], "tags": tags[:30],
+        "snippet": {"title": _clean(title)[:100], "description": _utf8_cap(_clean(description), 5000), "tags": _tag_cap(tags),
                     "categoryId": CATEGORY_EDUCATION, "defaultLanguage": lang, "defaultAudioLanguage": lang},
         "status": status,
     }

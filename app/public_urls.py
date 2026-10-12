@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 import time
 
@@ -17,7 +18,12 @@ _KEY_FILE = config.SECRETS_DIR / "url_signing_key"
 
 def _key() -> bytes:
     if not _KEY_FILE.exists():
-        _KEY_FILE.write_text(secrets.token_hex(32))
+        try:
+            with open(_KEY_FILE, "x") as f:          # exclusive create: two first publishes cannot race to two keys
+                f.write(secrets.token_hex(32))
+            os.chmod(_KEY_FILE, 0o600)
+        except FileExistsError:
+            pass
     return _KEY_FILE.read_text().strip().encode()
 
 

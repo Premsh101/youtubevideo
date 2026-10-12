@@ -33,13 +33,20 @@ def _cut_point(state: dict, lang: str, limit: float, total: float) -> float:
 
 
 def vertical_version(job, lang: str, limit: float) -> Path:
+    from . import branding
     o = job.state["outputs"][lang]
-    src = job.dir / (o.get("video_main") or o["video"])   # Shorts/Reels: rhyme only, no intro/outro
+    src = job.dir / (o.get("video_clean") or o.get("video_main") or o["video"])   # rhyme only, no intro/outro, no burnt text
     total = tts.media_duration(src)
     cut = _cut_point(job.state, lang, limit, total)
     out = job.dir / f"{src.stem}_vertical_{int(cut)}s.mp4"
     if not out.exists():
-        render.make_vertical(src, out, cut)
+        captions = job.dir / o["captions"] if o.get("lyrics_on_screen") and o.get("captions") else None
+        segs = (job.state.get("clips_plan") or {}).get("segments") or []
+        aspects = [s.get("aspect") for s in segs if s.get("aspect")]
+        frac = None
+        if aspects and max(aspects) < 1.0:            # every piece of footage is vertical: no double pillarbox
+            frac = min(1.0, max(aspects) / (config.VIDEO_W / config.VIDEO_H) * 1.02)
+        render.make_vertical(src, out, cut, captions, lang, branding.LOGO if branding.has_logo() else None, frac)
     return out
 
 
